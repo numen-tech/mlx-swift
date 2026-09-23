@@ -107,4 +107,4 @@ dispatch" above.
 - **`tools/update-mlx.sh`**: Added `steel_conv_3d` build target (required after merging upstream mlx changes)
 - **`.gitmodules`**: Points mlx submodule to the 1-bit fork
 - **`Source/Cmlx/mlx-generated/`**: Regenerated Metal shaders with 1-bit support
-- **`Source/Cmlx/mlx-counters/`, `Source/MLX/GPUCounters.swift`**: C shim + Swift wrapper over the fork's `mlx::core::metal::counters()` (dispatch/commit/sync counts, relaxed atomics; snapshot only after `eval` returns). SwiftPM-only, gated by `MLX_GPU_COUNTERS`
+- **`Source/Cmlx/mlx-counters/`, `Source/MLX/GPUCounters.swift`**: C shim + Swift wrapper over the fork's `mlx::core::metal::counters()` (dispatch/commit counts, explicit stream synchronizations and host GPU-completion waits; relaxed atomics, snapshot/reset only while no eval is in flight). SwiftPM-only, gated by `MLX_GPU_COUNTERS`

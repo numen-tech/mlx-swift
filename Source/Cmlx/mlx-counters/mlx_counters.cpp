@@ -5,7 +5,8 @@
 extern "C" void mlx_counters_snapshot(
     uint64_t* dispatches,
     uint64_t* commits,
-    uint64_t* syncs) {
+    uint64_t* syncs,
+    uint64_t* waits) {
   auto c = mlx::core::metal::counters();
   if (dispatches) {
     *dispatches = c.dispatches;
@@ -15,6 +16,9 @@ extern "C" void mlx_counters_snapshot(
   }
   if (syncs) {
     *syncs = c.syncs;
+  }
+  if (waits) {
+    *waits = c.waits;
   }
 }
 
