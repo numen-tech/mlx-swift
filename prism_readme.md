@@ -24,26 +24,29 @@ git clone https://github.com/PrismML-Eng/mlx-swift.git
 cd mlx-swift
 git checkout prism
 git submodule update --init
-```
-
-Apply patches (needed until upstreamed):
-
-```bash
-cd Source/Cmlx/mlx
-git apply ../../../patches/mlx-quantized-dispatch-1bit.patch
-cd ../../..
-
-cd Source/Cmlx/mlx-c
-git apply ../../../patches/mlx-c-global-scale-nullopt.patch
-cd ../../..
-```
-
-Regenerate Metal shaders and build:
-
-```bash
-./tools/update-mlx.sh
 swift build
 ```
+
+Nothing is patched on top of the submodules: every kernel and host-dispatch change lives in the
+`Source/Cmlx/mlx` fork itself, and the generated sources in `Source/Cmlx/mlx-generated/` are
+checked in, already regenerated from that submodule.
+
+### Changing kernels or host dispatch
+
+Kernel and host changes go to the MLX C++ fork, [numen-tech/mlx](https://github.com/numen-tech/mlx)
+(Metal kernels in `mlx/backend/metal/kernels/quantized.h`, dispatch in `mlx/backend/metal/quantized.cpp`;
+the `prism-0.31.1-fixes` branch today). They land here by bumping the `Source/Cmlx/mlx` submodule and
+regenerating:
+
+```bash
+LC_ALL=C CC=$(xcrun -f clang) CXX=$(xcrun -f clang++) ./tools/update-mlx.sh
+```
+
+**Never hand-edit `Source/Cmlx/mlx-generated/`** (or the other files that script writes): the script
+deletes and rebuilds them from the submodule on every run, so a hand edit is silently lost the next
+time anyone regenerates. `LC_ALL=C` keeps `mlx-generated/cuda/cuda_jit_sources.h` in the checked-in
+order (the script enumerates the CUDA sources with a locale-collated glob), and `CC`/`CXX` pin cmake
+to Xcode's clang on machines where a toolchain shim shadows `cc`.
 
 ## Quantization Format
 
@@ -81,12 +84,13 @@ The mlx submodule points to [PrismML-Eng/mlx](https://github.com/PrismML-Eng/mlx
 - **Kernel instantiation** (`quantized.metal`): `instantiate_quantized_groups(1)` for all group sizes
 - **CPU backend** (`cpu/quantized.cpp`): 1-bit dequantization path
 
-#### Patches (applied on top of submodules)
+#### Patches
 
-| Patch | File | Change |
-|-------|------|--------|
-| `mlx-quantized-dispatch-1bit.patch` | `mlx/backend/metal/quantized.cpp` | Guards fast-path kernel dispatch for 1-bit on mobile Metal GPUs. (2 lines) |
-| `mlx-c-global-scale-nullopt.patch` | `mlx-c/mlx/c/ops.cpp` | Passes `std::nullopt` for new `global_scale` parameters in `quantize`, `dequantize`, and `qqmm` C bindings. (4 lines) |
+None. Earlier revisions carried a `patches/` directory with manual `git apply` steps on top of the
+submodules; both patches are gone. The 1-bit host-dispatch guard was never needed (the fork's 1-bit
+`qmv_fast` path is correct and covered by its consumers' tests), and the pinned mlx-c (v0.6.0) handles
+`global_scale` in its own bindings. Kernel and host changes live only in numen-tech/mlx — see
+"Changing kernels or host dispatch" above.
 
 #### MLX-Swift level
 
