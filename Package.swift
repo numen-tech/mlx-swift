@@ -228,12 +228,6 @@ let noCudaCmlxExcludes = [
         .define("_METAL_"),
         .define("SWIFTPM_BUNDLE", to: "\"mlx-swift_Cmlx\""),
         .define("METAL_PATH", to: "\"default.metallib\""),
-
-        // Xcode 26.5 clang enforces consteval strictly enough that fmt
-        // 10.2.1's FMT_STRING compile-time checks fail to parse; define
-        // FMT_CONSTEVAL to empty to disable consteval (fmt falls back to
-        // runtime checking) until fmt is bumped.
-        .define("FMT_CONSTEVAL", to: ""),
     ]
 
     let linkerSettings: [LinkerSetting] = [
@@ -314,7 +308,7 @@ let cmlx = Target.target(
         .headerSearchPath("mlx-c"),
         .headerSearchPath("json/single_include/nlohmann"),
         .headerSearchPath("fmt/include"),
-        .define("MLX_VERSION", to: "\"0.32.0\""),
+        .define("MLX_VERSION", to: "\"0.32.2\""),
     ],
     linkerSettings: linkerSettings,
     plugins: cudaBuildPlugins,
