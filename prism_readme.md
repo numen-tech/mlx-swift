@@ -35,10 +35,11 @@ checked in, already regenerated from that submodule.
 
 Kernel and host changes go to the MLX C++ fork, [numen-tech/mlx](https://github.com/numen-tech/mlx)
 (Metal kernels in `mlx/backend/metal/kernels/quantized.h`, dispatch in `mlx/backend/metal/quantized.cpp`).
-The submodule must sit at the head of [numen-tech/mlx#1](https://github.com/numen-tech/mlx/pull/1)
-(`fork/179-affine-sym-kernels`; the `prism-0.31.1-fixes` tip once that PR has merged), never at the
-pre-#1 `prism-0.31.1-fixes` tip: at `b2b8a3d8` the header has no `affine_sym`, so a regeneration from
-it silently drops the bias-free 1/2-bit kernels. Changes land here by bumping the `Source/Cmlx/mlx`
+This branch tracks MLX 0.32.2: the submodule must sit at the head of
+[numen-tech/mlx#2](https://github.com/numen-tech/mlx/pull/2) (`fork/86-affine-sym-0.32.2`; the
+`prism-0.32.2-fixes` tip once that PR has merged), never at the pre-#2 `prism-0.32.2-fixes` tip: at
+`e1971918` the header has no `affine_sym`, so a regeneration from it silently drops the bias-free
+1/2-bit kernels. Changes land here by bumping the `Source/Cmlx/mlx`
 submodule and regenerating:
 
 ```bash
@@ -91,12 +92,14 @@ The mlx submodule points to [numen-tech/mlx](https://github.com/numen-tech/mlx) 
 
 None. Earlier revisions carried a `patches/` directory with manual `git apply` steps on top of the
 submodules; both patches are gone. `mlx-quantized-dispatch-1bit.patch` (deleted in `2f4241ef`) added
-a host-side `bits >= 2` guard that kept 1-bit matmuls off `qmv_fast`. The guard is unnecessary: the
-fork's 1-bit `qmv_fast` handles the `K % 512` remainder in-kernel (the partial tail block of
-`qmv_fast_impl`) and, as of numen-tech/mlx `c431c502` (numen-tech/mlx#1, Codex P1), skips the
-inactive-lane weight reads in that tail, so the 1-bit fast path stays on (mlx#3, ~+11% decode). The
-`global_scale` patch is unnecessary because the pinned mlx-c (v0.6.0) handles `global_scale` in its
-own bindings. Kernel and host changes live only in numen-tech/mlx — see "Changing kernels or host
+a host-side `bits >= 2` guard that kept 1-bit matmuls off `qmv_fast`. The guard is unnecessary: on the
+0.32.2 line the host fast gate is exact -- `qmv_fast_k_alignment` (numen-tech/mlx `7072c9a2f`,
+numen-tech/mlx#2, following upstream mlx#3965) sends a 1-bit matmul to `qmv_fast` only when K is a
+multiple of the fork kernel's 1024-value block (2-bit: 512) and everything else to the generic
+`qmv` -- so the 1-bit fast path stays on (mlx#3, ~+11% decode) and the partial tail block of
+`qmv_fast_impl` (still carried, with the inactive-lane skip of numen-tech/mlx `c431c502`, as
+`ab914a5b5`) is unreachable from this host. The `global_scale` patch is unnecessary because the
+pinned mlx-c (`c74db53`, v0.6.0 + 7 upstream commits) handles `global_scale` in its own bindings. Kernel and host changes live only in numen-tech/mlx — see "Changing kernels or host
 dispatch" above.
 
 #### MLX-Swift level
