@@ -353,7 +353,10 @@ let package = Package(
             ],
             exclude: mlxSwiftExcludes,
             swiftSettings: [
-                .enableExperimentalFeature("StrictConcurrency")
+                .enableExperimentalFeature("StrictConcurrency"),
+                // GPUCounters.swift: the Cmlx mlx_counters_* shim is SwiftPM-only
+                // (the CMake and Xcode-project builds do not compile it).
+                .define("MLX_GPU_COUNTERS"),
             ]
         ),
         .target(
@@ -403,7 +406,8 @@ let package = Package(
             name: "MLXTests",
             dependencies: [
                 "MLX", "MLXNN", "MLXOptimizers",
-            ]
+            ],
+            swiftSettings: [.define("MLX_GPU_COUNTERS")]
         ),
         .testTarget(
             name: "MLXIntegrationTests",
