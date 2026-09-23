@@ -1,6 +1,12 @@
 #!/bin/zsh
 
 # See MAINTENANCE.md : Updating `mlx` and `mlx-c`
+#
+# Never hand-edit Source/Cmlx/mlx-generated/ (or the other files this script
+# writes): this script deletes and rebuilds them from the Source/Cmlx/mlx
+# submodule, so any edit made here is lost on the next run. Kernel changes go
+# to the fork, https://github.com/numen-tech/mlx, and land here by bumping the
+# submodule and re-running this script (numen-tech/gemma4-qat#179).
 
 set -e
 
