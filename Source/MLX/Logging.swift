@@ -246,7 +246,7 @@ extension MLXLogger {
                 case .error: .error
                 }
             if logger.isEnabled(type: level) {
-                let message = message()
+                let message = message() + metadataSuffix(metadata())
                 logger.log(level: level, "\(message, privacy: .public)")
             }
         }
@@ -287,14 +287,24 @@ public struct StderrHandler: MLXLogHandler {
         line: UInt
     ) {
         if level >= Self.lock.withLock({ Self._logLevel }) {
-            let message = formatted(level: level, message: message(), date: Date())
+            let message = formatted(
+                level: level, message: message(), metadata: metadata(), date: Date())
             FileHandle.standardError.write(Data(message.utf8))
         }
     }
 
-    /// The line written for a record, e.g. `9/24/2026, 10:15:00 AM [info] KVCache: message`.
-    func formatted(level: LogLevel, message: String, date: Date) -> String {
+    /// The line written for a record, e.g.
+    /// `9/24/2026, 10:15:00 AM [info] KVCache: message key=value`.
+    func formatted(level: LogLevel, message: String, metadata: [String: String]?, date: Date)
+        -> String
+    {
         let ts = date.formatted(date: .numeric, time: .standard)
-        return "\(ts) [\(level)] \(label): \(message)\n"
+        return "\(ts) [\(level)] \(label): \(message)\(metadataSuffix(metadata))\n"
     }
+}
+
+/// Metadata as ` key=value` pairs sorted by key, or an empty string when there is none.
+func metadataSuffix(_ metadata: [String: String]?) -> String {
+    guard let metadata, !metadata.isEmpty else { return "" }
+    return metadata.sorted { $0.key < $1.key }.map { " \($0.key)=\($0.value)" }.joined()
 }

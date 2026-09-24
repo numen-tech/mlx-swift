@@ -90,8 +90,17 @@ nonisolated(unsafe) private var logs = [String: [String]]()
 
     @Test func testStderrLineHasLabel() {
         let line = StderrHandler(label: "KVCache").formatted(
-            level: .warning, message: "evicted", date: Date(timeIntervalSince1970: 0))
+            level: .warning, message: "evicted", metadata: nil,
+            date: Date(timeIntervalSince1970: 0))
         #expect(line.hasSuffix(" [warning] KVCache: evicted\n"))
+    }
+
+    @Test func testStderrLineHasMetadata() {
+        let line = StderrHandler(label: "KVCache").formatted(
+            level: .info, message: "evicted", metadata: ["tokens": "128", "layer": "3"],
+            date: Date(timeIntervalSince1970: 0))
+        #expect(line.hasSuffix(" [info] KVCache: evicted layer=3 tokens=128\n"))
+        #expect(metadataSuffix([:]) == "")
     }
 
     @Test func testStderr() async throws {
