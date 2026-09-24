@@ -122,6 +122,17 @@ public final class Device: @unchecked Sendable, Hashable {
         return DeviceType(cDeviceType)
     }
 
+    /// Whether this build of MLX can run on the device: it has a backend for the
+    /// ``deviceType`` and the device's index is less than the number of such devices.
+    ///
+    /// Check a GPU with `Device(.gpu).isAvailable` rather than `Device.gpu.isAvailable`:
+    /// ``gpu`` resolves the GPU stream, which ends the process when there is no GPU
+    /// (e.g. a CPU-only Linux build).
+    public var isAvailable: Bool {
+        var available = false
+        return mlx_device_is_available(&available, ctx) == 0 && available
+    }
+
     /// Return the current default device.
     static public func defaultDevice() -> Device {
         Stream.defaultDevice

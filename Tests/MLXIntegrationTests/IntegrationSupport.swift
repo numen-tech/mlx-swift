@@ -83,8 +83,15 @@ private let matmulPrecisionIsFloat32: Bool = {
     return ProcessInfo.processInfo.environment["MLX_ENABLE_TF32"] == "0"
 }()
 
+/// Whether there is a GPU to run on.  `Device(.gpu)` rather than `Device.gpu`:
+/// resolving the GPU stream ends the process when there is none.
+private let gpuIsAvailable = Device(.gpu).isAvailable
+
 /// Run a generated case.
 ///
+/// - the case is skipped (cancelled) when there is no GPU, e.g. a CPU-only
+///   (`SPM_CUDA=0`) Linux build: the values are GPU results, and the tolerances
+///   are tuned for them
 /// - the default device is scoped to the block rather than set globally, so the
 ///   generated tests can run in parallel with tests that want another device
 /// - MLX errors are converted into Swift errors instead of ending the process,
@@ -95,6 +102,11 @@ private let matmulPrecisionIsFloat32: Bool = {
 func withIntegrationState<R>(
     seed: UInt64, sourceLocation: SourceLocation = #_sourceLocation, _ body: () throws -> R
 ) throws -> R {
+    guard gpuIsAvailable else {
+        try Test.cancel(
+            "no GPU: the generated values are GPU results", sourceLocation: sourceLocation)
+    }
+
     #expect(
         matmulPrecisionIsFloat32,
         """

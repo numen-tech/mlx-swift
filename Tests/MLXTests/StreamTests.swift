@@ -67,6 +67,16 @@ class StreamTests: XCTestCase {
         XCTAssertEqual(s3.deviceType, .cpu)
     }
 
+    func testDeviceIsAvailable() {
+        XCTAssertTrue(Device(.cpu).isAvailable)
+        // an index past the number of GPUs is never available
+        XCTAssertFalse(Device(.gpu, index: 1000).isAvailable)
+
+        #if canImport(Metal)
+            XCTAssertTrue(Device(.gpu).isAvailable)
+        #endif
+    }
+
     // MARK: - withDefaultDevice
 
     func testUsingDevice() {
