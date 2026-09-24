@@ -349,13 +349,26 @@ public func RoPE(
 ///
 /// return matmul(scores, values).transposed(0, 2, 1, 3)
 /// ```
+///
+/// - Parameters:
+///   - queries: queries with shape `[B, N_q, T_q, D]`
+///   - keys: keys with shape `[B, N_kv, T_kv, D]`
+///   - values: values with shape `[B, N_kv, T_kv, D]`
+///   - scale: scale for queries, typically `1 / sqrt(q.dim(-1))`
+///   - mask: mask array
+///   - memoryEfficientThreshold: unused
+///   - forceFused: If `true` use a fused kernel regardless of the heuristic choice.  This
+///     can result in slower kernels in some case but can also reduce memory consumption
+///   - stream: stream to evaluate on
 public func scaledDotProductAttention(
     queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float, mask: MLXArray?,
-    memoryEfficientThreshold: Int? = nil, stream: StreamOrDevice = .default
+    memoryEfficientThreshold: Int? = nil, forceFused: Bool = false,
+    stream: StreamOrDevice = .default
 ) -> MLXArray {
     return MLXFast.scaledDotProductAttention(
         queries: queries, keys: keys, values: values, scale: scale, mask: mask,
-        memoryEfficientThreshold: memoryEfficientThreshold, stream: stream)
+        memoryEfficientThreshold: memoryEfficientThreshold, forceFused: forceFused,
+        stream: stream)
 }
 
 /// Root Mean Square normalization (RMS norm).
