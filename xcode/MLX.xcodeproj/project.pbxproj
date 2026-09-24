@@ -948,6 +948,7 @@
 				mlx/backend/metal/kernels/softmax.metal,
 				mlx/backend/metal/kernels/sort.h,
 				mlx/backend/metal/kernels/sort.metal,
+				mlx/backend/metal/kernels/spec_decode.metal,
 				mlx/backend/metal/kernels/steel/attn/attn.h,
 				mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.h,
 				mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.metal,
