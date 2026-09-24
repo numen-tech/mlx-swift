@@ -265,6 +265,28 @@ class OptimizerTests: XCTestCase {
         XCTAssertLessThan(updateSingular.max().item(Float.self), 1.5)
     }
 
+    func testMuonScalesRankFourByTheFlattenedMatrix() {
+        // a [4, 1, 1, 2] filter is orthogonalized as a [4, 2] matrix, so the step
+        // is scaled by sqrt(4 / 2) -- not by the trailing [1, 2] of the original
+        // shape, which would give sqrt(max(1, 1 / 2)) = 1
+        let optimizer = Muon(
+            learningRate: 1.0, momentum: 0.0, weightDecay: 0.0, nesterov: false, nsSteps: 5)
+
+        let values = (0 ..< 8).map { Float(sin(Double($0) * 1.3) + 0.2 * Double($0 % 3)) }
+        let gradient = MLXArray(values, [4, 1, 1, 2])
+        let parameter = MLXArray.zeros([4, 1, 1, 2])
+
+        let (updated, _) = optimizer.applySingle(
+            gradient: gradient, parameter: parameter, state: MLXArray.zeros([4, 1, 1, 2]))
+
+        let orthogonalized = optimizer.zeropowerViaNewtonSchulz5(
+            gradient.reshaped([4, 2]), steps: 5)
+        let expected = -Float(2).squareRoot() * orthogonalized.reshaped([4, 1, 1, 2])
+
+        XCTAssertEqual(updated.shape, [4, 1, 1, 2])
+        assertEqual(updated, expected, atol: 1e-5)
+    }
+
     func testMuonLeavesLowRankParametersAlone() {
         // rank 0/1 parameters skip the orthogonalization: the update is the plain
         // momentum direction, so a single step moves by learningRate * gradient
@@ -378,6 +400,25 @@ class OptimizerTests: XCTestCase {
         eval(vector)
 
         XCTAssertEqual(vector[unwrapping: "w"]!.shape, [5])
+    }
+
+    func testAdafactorShapeChangeRecreatesState() {
+        // with beta1 set the first moment is kept as well; a later call with a
+        // different shape for the same key must not reuse any state of the old
+        // shape -- [3, 4] state would broadcast into a [1, 4] parameter and turn
+        // it into a [3, 4] one, and [3, 4] cannot combine with [4, 3] at all
+        let optimizer = Adafactor(learningRate: 0.1, beta1: 0.9, relativeStep: false)
+
+        for shape in [[3, 4], [1, 4], [4, 3], [5], [3, 4]] {
+            let parameters = ModuleParameters.unflattened([("w", MLXArray.ones(shape))])
+            let updated = optimizer.apply(
+                gradients: parameters.mapValues { 0.5 * $0 }, modelParameters: parameters)
+            let w = updated[unwrapping: "w"]!
+            eval(w)
+
+            XCTAssertEqual(w.shape, shape)
+            XCTAssertTrue(isFinite(w).all().item(Bool.self), "\(shape) is not finite")
+        }
     }
 
     class TwoParameterModel: Module {

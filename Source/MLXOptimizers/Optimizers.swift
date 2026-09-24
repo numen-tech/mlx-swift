@@ -726,6 +726,17 @@ open class Adafactor: OptimizerBase<Adafactor.State> {
         return rFactor.expandedDimensions(axis: -1) * cFactor.expandedDimensions(axis: -2)
     }
 
+    /// The existing state if it has `shape`, otherwise fresh zeros -- a parameter's
+    /// shape can change between updates, and stale state must not be broadcast into it.
+    private func reusable(_ existing: MLXArray?, shape: [Int], like gradient: MLXArray)
+        -> MLXArray
+    {
+        if let existing, existing.shape == shape {
+            return existing
+        }
+        return MLXArray.zeros(shape, dtype: gradient.dtype)
+    }
+
     override open func applySingle(gradient: MLXArray, parameter: MLXArray, state: State) -> (
         MLXArray, State
     ) {
@@ -748,10 +759,8 @@ open class Adafactor: OptimizerBase<Adafactor.State> {
             let rowShape = Array(gradientShape.dropLast())
             let columnShape = Array(gradientShape.dropLast(2)) + [gradientShape.last!]
 
-            var expAvgSqRow =
-                state.expAvgSqRow ?? MLXArray.zeros(rowShape, dtype: gradient.dtype)
-            var expAvgSqCol =
-                state.expAvgSqCol ?? MLXArray.zeros(columnShape, dtype: gradient.dtype)
+            var expAvgSqRow = reusable(state.expAvgSqRow, shape: rowShape, like: gradient)
+            var expAvgSqCol = reusable(state.expAvgSqCol, shape: columnShape, like: gradient)
 
             expAvgSqRow = (beta2 * expAvgSqRow) + (1 - beta2) * mean(update, axis: -1)
             expAvgSqCol = (beta2 * expAvgSqCol) + (1 - beta2) * mean(update, axis: -2)
@@ -762,7 +771,7 @@ open class Adafactor: OptimizerBase<Adafactor.State> {
             update = approvateExpMovingAverage(expAvgSqRow: expAvgSqRow, expAvgSqCol: expAvgSqCol)
             update = update * gradient
         } else {
-            var expAvgSq = state.expAvgSq ?? MLXArray.zeros(like: gradient)
+            var expAvgSq = reusable(state.expAvgSq, shape: gradientShape, like: gradient)
             expAvgSq = (beta2 * expAvgSq) + (1 - beta2) * update
             state.expAvgSq = expAvgSq
             update = rsqrt(expAvgSq) * gradient
@@ -772,7 +781,7 @@ open class Adafactor: OptimizerBase<Adafactor.State> {
         update = learningRate * update
 
         if let beta1 {
-            var expAvg = state.expAvg ?? MLXArray.zeros(like: gradient)
+            var expAvg = reusable(state.expAvg, shape: gradientShape, like: gradient)
             expAvg = (beta1 * expAvg) + (1 - beta1) * update
             state.expAvg = expAvg
             update = expAvg
@@ -869,13 +878,14 @@ open class Muon: OptimizerBaseArrayState {
                 update = update.reshaped([update.dim(0), -1])
             }
             update = zeropowerViaNewtonSchulz5(update, steps: nsSteps)
-            if reshapeNeeded {
-                update = update.reshaped(originalShape)
-            }
-            // Scale the learning rate by sqrt(max(1, rows / cols)).
+            // Scale the learning rate by sqrt(max(1, rows / cols)) of the matrix that
+            // was orthogonalized, i.e. before restoring the original shape.
             let rows = Float(update.dim(-2))
             let cols = Float(update.dim(-1))
             lr *= pow(max(1, rows / cols), 0.5)
+            if reshapeNeeded {
+                update = update.reshaped(originalShape)
+            }
         }
 
         return (parameter - lr * update, v)
