@@ -476,6 +476,12 @@ class MLXArrayInitTests: XCTestCase {
 
         let halfOpen = MLX.linspace(0, 1, count: 5, endpoint: false)
         assertEqual(halfOpen, MLXArray(converting: [0, 0.2, 0.4, 0.6, 0.8]), atol: 1e-6)
+
+        // the MLXArray overloads forward it too, for integer and floating bounds
+        let expected = MLXArray(converting: [0, 0.2, 0.4, 0.6, 0.8])
+        assertEqual(MLXArray.linspace(0, 1, count: 5, endpoint: false), expected, atol: 1e-6)
+        assertEqual(
+            MLXArray.linspace(0.0, 1.0, count: 5, endpoint: false), expected, atol: 1e-6)
     }
 
     #if canImport(IOSurface)

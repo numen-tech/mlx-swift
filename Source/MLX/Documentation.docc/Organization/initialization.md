@@ -264,8 +264,8 @@ there are specific initializers to request it:
 - ``MLXArray/full(_:values:type:stream:)``
 - ``MLXArray/full(_:values:stream:)``
 - ``MLXArray/identity(_:type:stream:)``
-- ``MLXArray/linspace(_:_:count:dtype:stream:)-(Int,Int,Int,DType?,StreamOrDevice)``
-- ``MLXArray/linspace(_:_:count:dtype:stream:)-(Double,Double,Int,DType?,StreamOrDevice)``
+- ``MLXArray/linspace(_:_:count:endpoint:dtype:stream:)-4x9vl``
+- ``MLXArray/linspace(_:_:count:endpoint:dtype:stream:)-8fhwg``
 - ``MLXArray/repeated(_:count:axis:stream:)``
 - ``MLXArray/repeated(_:count:stream:)``
 - ``MLXArray/repeat(_:count:axis:stream:)``

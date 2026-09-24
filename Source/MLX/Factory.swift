@@ -345,17 +345,18 @@ extension MLXArray {
     ///     - start: start value
     ///     - stop: stop value
     ///     - count: number of samples
+    ///     - endpoint: if `true` then the endpoint is the last sample, if `false` it is a half-open interval
     ///     - dtype: dtype of the result, `float32` if not specified
     ///     - stream: stream or device to evaluate on
     ///
     /// ### See Also
     /// - <doc:initialization>
-    /// - ``linspace(_:_:count:dtype:stream:)-3fx01``
+    /// - ``linspace(_:_:count:endpoint:dtype:stream:)-8fhwg``
     static public func linspace<T: HasDType>(
-        _ start: T, _ stop: T, count: Int = 50, dtype: DType? = nil,
+        _ start: T, _ stop: T, count: Int = 50, endpoint: Bool = true, dtype: DType? = nil,
         stream: StreamOrDevice = .default
     ) -> MLXArray where T: BinaryInteger {
-        MLX.linspace(start, stop, count: count, dtype: dtype, stream: stream)
+        MLX.linspace(start, stop, count: count, endpoint: endpoint, dtype: dtype, stream: stream)
     }
 
     /// Generate `count` evenly spaced numbers over interval `[start, stop]` for `BinaryFloatingPoint`.
@@ -371,17 +372,18 @@ extension MLXArray {
     ///     - start: start value
     ///     - stop: stop value
     ///     - count: number of samples
+    ///     - endpoint: if `true` then the endpoint is the last sample, if `false` it is a half-open interval
     ///     - dtype: dtype of the result, derived from `T` if not specified
     ///     - stream: stream or device to evaluate on
     ///
     /// ### See Also
     /// - <doc:initialization>
-    /// - ``linspace(_:_:count:dtype:stream:)-9yqai``
+    /// - ``linspace(_:_:count:endpoint:dtype:stream:)-4x9vl``
     static public func linspace<T: HasDType>(
-        _ start: T, _ stop: T, count: Int = 50, dtype: DType? = nil,
+        _ start: T, _ stop: T, count: Int = 50, endpoint: Bool = true, dtype: DType? = nil,
         stream: StreamOrDevice = .default
     ) -> MLXArray where T: BinaryFloatingPoint {
-        MLX.linspace(start, stop, count: count, dtype: dtype, stream: stream)
+        MLX.linspace(start, stop, count: count, endpoint: endpoint, dtype: dtype, stream: stream)
     }
 
     /// Generate values in the half-open interval `[0, stop)`.

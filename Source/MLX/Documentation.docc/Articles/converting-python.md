@@ -190,7 +190,7 @@ This is a mapping of `mx` free functions to their ``MLX`` counterparts.
 `identity` | ``MLXArray/identity(_:type:stream:)``
 `less` | ``MLX/less(_:_:stream:)``
 `less_equal` | ``MLX/lessEqual(_:_:stream:)``
-`linspace` | ``MLXArray/linspace(_:_:count:dtype:stream:)-(Int,Int,Int,DType?,StreamOrDevice)``
+`linspace` | ``MLXArray/linspace(_:_:count:endpoint:dtype:stream:)-4x9vl``
 `load` | ``MLX/loadArray(url:stream:)`` and ``MLX/loadArrays(url:stream:)``
 `log` | ``MLX/log(_:stream:)``
 `log10` | ``MLX/log10(_:stream:)``
