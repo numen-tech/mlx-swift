@@ -1,0 +1,315 @@
+// Copyright © 2026 Apple Inc.
+
+import Foundation
+
+public enum LogLevel: Int, Comparable, Sendable, CustomStringConvertible {
+    case trace = 0
+    case debug = 1
+    case info = 2
+    case warning = 3
+    case error = 4
+
+    public static func < (lhs: LogLevel, rhs: LogLevel) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    public var description: String {
+        switch self {
+        case .trace: "trace"
+        case .debug: "debug"
+        case .info: "info"
+        case .warning: "warning"
+        case .error: "error"
+        }
+    }
+}
+
+/// Protocol for backing of MLXLogger.
+///
+/// Install with ``MLXLogger/factory`` or ``StderrHandler/install()``
+public protocol MLXLogHandler: Sendable {
+    func log(
+        level: LogLevel,
+        message: () -> String,
+        metadata: () -> [String: String]?,
+        file: StaticString,
+        function: StaticString,
+        line: UInt
+    )
+}
+
+public typealias MLXLogHandlerFactory = @Sendable (String) -> any MLXLogHandler
+
+#if canImport(OSLog)
+    private let defaultFactory: MLXLogHandlerFactory = { OSLogHandler(label: $0) }
+#else
+    private let defaultFactory: MLXLogHandlerFactory = { StderrHandler(label: $0) }
+#endif
+
+private let factoryLock = NSLock()
+#if swift(>=5.10)
+    nonisolated(unsafe) private var handlerFactory = defaultFactory
+#else
+    private var handlerFactory = defaultFactory
+#endif
+
+/// Thin wrapper for logging in MLX and MLX libraries.  This
+/// provides a hook for library code if it needs logging without
+/// adding a dependency or requiring a certain logging backend.
+///
+/// By default it will log to `OSLog` (macOS, iOS) or `stderr`
+/// (others).  Developers can override the backing by implementing
+/// ``MLXLogHandler`` and installing it with ``MLXLogger/factory``,
+/// e.g.
+///
+/// ```swift
+/// MLXLogger.factory = { StderrHandler(label: $0) }
+/// ```
+///
+/// The factory is used at the time of the first log for the given
+/// logger -- whatever factory is installed at that time will be used.
+///
+/// Callers can use this the same way that `swift-log` is used:
+///
+/// ```swift
+/// private let logger = MLXLogger(label: "KVCache")
+///
+/// func ...() {
+///     logger.error("Failed to ...")
+/// }
+/// ```
+public final class MLXLogger: @unchecked (Sendable) {
+
+    private let label: String
+
+    /// backing that is realized at first log time
+    private let lock = NSLock()
+    private var backing: MLXLogHandler?
+
+    public static var factory: MLXLogHandlerFactory {
+        get {
+            factoryLock.lock()
+            defer { factoryLock.unlock() }
+            return handlerFactory
+        }
+        set {
+            factoryLock.lock()
+            defer { factoryLock.unlock() }
+            handlerFactory = newValue
+        }
+    }
+
+    public init(label: String) {
+        self.label = label
+    }
+
+    // note: this avoids `lock.withLock { ... }` returning an existential --
+    // that pattern crashes the Swift 6.3 compiler on Linux (SIL
+    // ClosureLifetimeFixup pass)
+    //
+    // The check, the factory call and the assignment happen under one lock so
+    // that concurrent first logs all get the same handler rather than each
+    // creating one and overwriting the others.
+    private func _backing() -> MLXLogHandler {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let backing {
+            return backing
+        }
+
+        let backing = Self.factory(label)
+        self.backing = backing
+        return backing
+    }
+
+    fileprivate func _log(
+        level: LogLevel,
+        message: () -> String, metadata: () -> [String: String]?,
+        file: StaticString, function: StaticString, line: UInt
+    ) {
+        _backing().log(
+            level: level,
+            message: message, metadata: metadata,
+            file: file, function: function, line: line)
+    }
+}
+
+extension MLXLogger {
+
+    /// Log with the given level and message.
+    public func log(
+        level: LogLevel,
+        message: @autoclosure () -> String,
+        metadata: @autoclosure () -> [String: String]?,
+        file: StaticString = #fileID,
+        function: StaticString = #function, line: UInt = #line
+    ) {
+        _log(
+            level: level, message: message, metadata: metadata,
+            file: file, function: function, line: line)
+    }
+
+    /// Log a trace message.
+    public func trace(
+        _ message: @autoclosure () -> String,
+        metadata: @autoclosure () -> [String: String]? = nil,
+        file: StaticString = #fileID,
+        function: StaticString = #function,
+        line: UInt = #line
+    ) {
+        _log(
+            level: .trace, message: message, metadata: metadata,
+            file: file, function: function, line: line)
+    }
+
+    /// Log a debug message.
+    public func debug(
+        _ message: @autoclosure () -> String,
+        metadata: @autoclosure () -> [String: String]? = nil,
+        file: StaticString = #fileID,
+        function: StaticString = #function,
+        line: UInt = #line
+    ) {
+        _log(
+            level: .debug, message: message, metadata: metadata,
+            file: file, function: function, line: line)
+    }
+
+    /// Log a info message.
+    public func info(
+        _ message: @autoclosure () -> String,
+        metadata: @autoclosure () -> [String: String]? = nil,
+        file: StaticString = #fileID,
+        function: StaticString = #function,
+        line: UInt = #line
+    ) {
+        _log(
+            level: .info, message: message, metadata: metadata,
+            file: file, function: function, line: line)
+    }
+
+    /// Log a warning message.
+    public func warning(
+        _ message: @autoclosure () -> String,
+        metadata: @autoclosure () -> [String: String]? = nil,
+        file: StaticString = #fileID,
+        function: StaticString = #function,
+        line: UInt = #line
+    ) {
+        _log(
+            level: .warning, message: message, metadata: metadata,
+            file: file, function: function, line: line)
+    }
+
+    /// Log an error message.
+    public func error(
+        _ message: @autoclosure () -> String,
+        metadata: @autoclosure () -> [String: String]? = nil,
+        file: StaticString = #fileID,
+        function: StaticString = #function,
+        line: UInt = #line
+    ) {
+        _log(
+            level: .error, message: message, metadata: metadata,
+            file: file, function: function, line: line)
+    }
+}
+
+#if canImport(OSLog)
+    import OSLog
+
+    /// On systems that support it, a log handler that is backed by OSLog.
+    public struct OSLogHandler: MLXLogHandler {
+
+        private let logger: os.Logger
+
+        public static func install() {
+            MLXLogger.factory = { OSLogHandler(label: $0) }
+        }
+
+        public init(label: String) {
+            self.logger = Logger(subsystem: "mlx-swift", category: label)
+        }
+
+        public func log(
+            level: LogLevel,
+            message: () -> String, metadata: () -> [String: String]?,
+            file: StaticString, function: StaticString, line: UInt
+        ) {
+            let level = Self.osLogType(for: level)
+            if logger.isEnabled(type: level) {
+                let message = message() + metadataSuffix(metadata())
+                logger.log(level: level, "\(message, privacy: .public)")
+            }
+        }
+
+        /// The OSLog type a record is logged at: a warning is `.default` (notice),
+        /// so it stays distinguishable from an error.
+        static func osLogType(for level: LogLevel) -> OSLogType {
+            switch level {
+            case .trace: .debug
+            case .debug: .debug
+            case .info: .info
+            case .warning: .default
+            case .error: .error
+            }
+        }
+    }
+#endif
+
+/// A logger that logs to `stderr`.
+///
+/// Callers can set `StderrHandler.logLevel` to filter output by level.
+public struct StderrHandler: MLXLogHandler {
+
+    private let label: String
+
+    private static let lock = NSLock()
+    #if swift(>=5.10)
+        nonisolated(unsafe) private static var _logLevel = LogLevel.info
+    #else
+        private static var _logLevel = LogLevel.info
+    #endif
+
+    /// Get or set the lowest log level.  Default is `.info`.
+    public static var logLevel: LogLevel {
+        get { lock.withLock { _logLevel } }
+        set { lock.withLock { _logLevel = newValue } }
+    }
+
+    public static func install() {
+        MLXLogger.factory = { StderrHandler(label: $0) }
+    }
+
+    public init(label: String) {
+        self.label = label
+    }
+
+    public func log(
+        level: LogLevel, message: @autoclosure () -> String,
+        metadata: @autoclosure () -> [String: String]?, file: StaticString, function: StaticString,
+        line: UInt
+    ) {
+        if level >= Self.lock.withLock({ Self._logLevel }) {
+            let message = formatted(
+                level: level, message: message(), metadata: metadata(), date: Date())
+            FileHandle.standardError.write(Data(message.utf8))
+        }
+    }
+
+    /// The line written for a record, e.g.
+    /// `9/24/2026, 10:15:00 AM [info] KVCache: message key=value`.
+    func formatted(level: LogLevel, message: String, metadata: [String: String]?, date: Date)
+        -> String
+    {
+        let ts = date.formatted(date: .numeric, time: .standard)
+        return "\(ts) [\(level)] \(label): \(message)\(metadataSuffix(metadata))\n"
+    }
+}
+
+/// Metadata as ` key=value` pairs sorted by key, or an empty string when there is none.
+func metadataSuffix(_ metadata: [String: String]?) -> String {
+    guard let metadata, !metadata.isEmpty else { return "" }
+    return metadata.sorted { $0.key < $1.key }.map { " \($0.key)=\($0.value)" }.joined()
+}

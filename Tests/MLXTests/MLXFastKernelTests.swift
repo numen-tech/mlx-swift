@@ -111,6 +111,23 @@ class MLXFastKernelTests: XCTestCase {
         XCTAssertEqual(result.sum().item(Float.self), 1281.9253, accuracy: 0.01)
     }
 
+    func testFreeSDPAForceFused() {
+        // the free function forwards forceFused: a fused kernel gives the same values
+        MLXRandom.seed(0)
+        let queries = MLXRandom.uniform(0.0 ..< 1.0, [1, 8, 16, 64])
+        let keys = MLXRandom.uniform(0.0 ..< 1.0, [1, 8, 16, 64])
+        let values = MLXRandom.uniform(0.0 ..< 1.0, [1, 8, 16, 64])
+
+        let expected = MLXFast.scaledDotProductAttention(
+            queries: queries, keys: keys, values: values, scale: 0.125, mask: nil)
+        let fused = MLX.scaledDotProductAttention(
+            queries: queries, keys: keys, values: values, scale: 0.125, mask: nil,
+            forceFused: true)
+
+        XCTAssertEqual(fused.shape, [1, 8, 16, 64])
+        XCTAssertTrue(allClose(fused, expected, rtol: 1e-4, atol: 1e-5).item())
+    }
+
     func testRoPEOutput() {
         // https://github.com/ml-explore/mlx-swift/issues/315
         MLXRandom.seed(0)

@@ -9,6 +9,17 @@ import MLXNN
 /// ### See Also
 /// - <doc:MLXOptimizers>
 /// - ``OptimizerBase``
+// Note on scalar precision: these optimizers store their hyperparameters as `Float`
+// while python stores them as double, so coefficients derived from them differ in
+// the last bits -- `1 - Float(0.95)` is 0.050000012, while python's `1 - 0.95`
+// rounds to 0.05.  Widening at the point of use (`1 - Double(momentum)`) cannot
+// recover python's value: the constant was already rounded when it was stored.
+//
+// The 2.4e-7 difference is invisible in the smooth optimizers, but Muon's
+// Newton-Schulz iteration grows it to ~2e-4 relative over a few steps, which is why
+// the generated `Muon` cases compare with a looser tolerance than the rest.  See
+// `todos/muon-04-pending-p3-float-hyperparameters.md`.
+
 public protocol Optimizer: Updatable, Evaluatable {
 
     /// Apply the gradients to the parameters of the model and update the model with the new parameters.
@@ -561,17 +572,17 @@ open class Lion: OptimizerBaseArrayState {
 
     /// The learning rate
     public var learningRate: Float
-    /// The coefficients used for computing running averages of the gradient and its square
-    public var betas: (Float, Float) = (0.9, 0.999)
+    /// The coefficients used for computing the gradient momentum and update direction
+    public var betas: (Float, Float) = (0.9, 0.99)
     /// The weight decay
     public var weightDecay: Float = 0.0
 
     /// Initialize the optimizer.
     /// - Parameters:
     ///   - learningRate: the learning rate
-    ///   - betas: coefficients used for computing running averages of the gradient and its square
+    ///   - betas: coefficients used for computing the gradient momentum and update direction
     ///   - weightDecay:the weight decay
-    public init(learningRate: Float, betas: (Float, Float) = (0.9, 0.999), weightDecay: Float = 0.0)
+    public init(learningRate: Float, betas: (Float, Float) = (0.9, 0.99), weightDecay: Float = 0.0)
     {
         self.learningRate = learningRate
         self.betas = betas
@@ -699,18 +710,33 @@ open class Adafactor: OptimizerBase<Adafactor.State> {
             relativeStepSize = MLXArray(learningRate!)
         }
 
-        var parameterScale = MLXArray(1.0)
+        // in the parameter's dtype, as Python does, so a float16 parameter isn't
+        // promoted to float32 by the step count or learning rate
+        let stepSize = relativeStepSize.asType(parameterRMS.dtype)
         if scaleParameter {
-            parameterScale = maximum(eps.1, parameterRMS)
+            return maximum(eps.1, parameterRMS) * stepSize
         }
-
-        return parameterScale * relativeStepSize
+        return stepSize
     }
 
     func approvateExpMovingAverage(expAvgSqRow: MLXArray, expAvgSqCol: MLXArray) -> MLXArray {
         let rFactor = rsqrt(expAvgSqRow / mean(expAvgSqRow, axis: -1, keepDims: true))
         let cFactor = rsqrt(expAvgSqCol)
-        return matmul(rFactor.expandedDimensions(axis: -1), cFactor.expandedDimensions(axis: 0))
+        // broadcast rather than matmul so this also works for parameters with more
+        // than two dimensions
+        return rFactor.expandedDimensions(axis: -1) * cFactor.expandedDimensions(axis: -2)
+    }
+
+    /// The existing state if it has `shape` and the gradient's dtype, otherwise fresh
+    /// zeros -- a parameter's shape or dtype can change between updates, and stale state
+    /// must not be broadcast into it or promote the update to its old dtype.
+    private func reusable(_ existing: MLXArray?, shape: [Int], like gradient: MLXArray)
+        -> MLXArray
+    {
+        if let existing, existing.shape == shape, existing.dtype == gradient.dtype {
+            return existing
+        }
+        return MLXArray.zeros(shape, dtype: gradient.dtype)
     }
 
     override open func applySingle(gradient: MLXArray, parameter: MLXArray, state: State) -> (
@@ -725,13 +751,18 @@ open class Adafactor: OptimizerBase<Adafactor.State> {
 
         let parameterRMS = rms(parameter)
         let learningRate = computeLearningRate(step: step, parameterRMS: parameterRMS)
-        let beta2 = 1.0 - pow(step, decayRate)
+        let beta2 = 1.0 - pow(step, decayRate).asType(parameterRMS.dtype)
 
         var update = square(gradient) + eps.0
 
         if factored {
-            var expAvgSqRow = state.expAvgSqRow!
-            var expAvgSqCol = state.expAvgSqCol!
+            // the state is created from the gradient shape so that it always agrees
+            // with the branch taken here, even if a parameter's rank changed
+            let rowShape = Array(gradientShape.dropLast())
+            let columnShape = Array(gradientShape.dropLast(2)) + [gradientShape.last!]
+
+            var expAvgSqRow = reusable(state.expAvgSqRow, shape: rowShape, like: gradient)
+            var expAvgSqCol = reusable(state.expAvgSqCol, shape: columnShape, like: gradient)
 
             expAvgSqRow = (beta2 * expAvgSqRow) + (1 - beta2) * mean(update, axis: -1)
             expAvgSqCol = (beta2 * expAvgSqCol) + (1 - beta2) * mean(update, axis: -2)
@@ -742,7 +773,7 @@ open class Adafactor: OptimizerBase<Adafactor.State> {
             update = approvateExpMovingAverage(expAvgSqRow: expAvgSqRow, expAvgSqCol: expAvgSqCol)
             update = update * gradient
         } else {
-            var expAvgSq = state.expAvgSq!
+            var expAvgSq = reusable(state.expAvgSq, shape: gradientShape, like: gradient)
             expAvgSq = (beta2 * expAvgSq) + (1 - beta2) * update
             state.expAvgSq = expAvgSq
             update = rsqrt(expAvgSq) * gradient
@@ -752,7 +783,7 @@ open class Adafactor: OptimizerBase<Adafactor.State> {
         update = learningRate * update
 
         if let beta1 {
-            var expAvg = state.expAvg!
+            var expAvg = reusable(state.expAvg, shape: gradientShape, like: gradient)
             expAvg = (beta1 * expAvg) + (1 - beta1) * update
             state.expAvg = expAvg
             update = expAvg
@@ -811,19 +842,19 @@ open class Muon: OptimizerBaseArrayState {
     }
 
     /// Orthogonalize a 2D matrix via a quintic Newton-Schulz iteration.
-    private func zeropowerViaNewtonSchulz5(_ input: MLXArray, steps: Int) -> MLXArray {
+    func zeropowerViaNewtonSchulz5(_ input: MLXArray, steps: Int) -> MLXArray {
         precondition(input.ndim == 2, "Newton-Schulz iteration expects a 2D array")
         let (a, b, c): (Float, Float, Float) = (3.4445, -4.7750, 2.0315)
         let transposeNeeded = input.dim(-2) > input.dim(-1)
 
         var X = transposeNeeded ? input.transposed(1, 0) : input
         // Frobenius-normalize so the iteration converges.
-        X = X / (sqrt((X * X).sum(keepDims: true)) + 1e-7)
+        X = X / (MLX.norm(X, keepDims: true) + 1e-7)
 
         for _ in 0 ..< steps {
             let A = matmul(X, X.transposed(1, 0))
-            let B = b * A + c * matmul(A, A)
-            X = a * X + matmul(B, X)
+            let B = addMM(b * A, A, A, alpha: c, beta: 1.0)
+            X = addMM(a * X, B, X, alpha: 1.0, beta: 1.0)
         }
 
         return transposeNeeded ? X.transposed(1, 0) : X
@@ -849,13 +880,14 @@ open class Muon: OptimizerBaseArrayState {
                 update = update.reshaped([update.dim(0), -1])
             }
             update = zeropowerViaNewtonSchulz5(update, steps: nsSteps)
-            if reshapeNeeded {
-                update = update.reshaped(originalShape)
-            }
-            // Scale the learning rate by sqrt(max(1, rows / cols)).
+            // Scale the learning rate by sqrt(max(1, rows / cols)) of the matrix that
+            // was orthogonalized, i.e. before restoring the original shape.
             let rows = Float(update.dim(-2))
             let cols = Float(update.dim(-1))
             lr *= pow(max(1, rows / cols), 0.5)
+            if reshapeNeeded {
+                update = update.reshaped(originalShape)
+            }
         }
 
         return (parameter - lr * update, v)

@@ -121,6 +121,16 @@ jobs:
         run: |
           xcrun xctest ~/Library/Developer/Xcode/DerivedData/mlx-swift-*/Build/Products/Debug/CmlxTests.xctest
           xcrun xctest ~/Library/Developer/Xcode/DerivedData/mlx-swift-*/Build/Products/Debug/MLXTests.xctest
+          xcrun xctest ~/Library/Developer/Xcode/DerivedData/mlx-swift-*/Build/Products/Debug/MLXIntegrationTests.xctest
+
+      - name: Run Distributed Tests SwiftPM (Xcode, macOS)
+        shell: sh
+        env:
+          # workaround for CI failure
+          DEVELOPER_DIR: /Applications/Xcode-latest.app
+        run: |
+          MLX_TEST_DISTRIBUTED=1 xcrun xctest -XCTest DistributedRingTests ~/Library/Developer/Xcode/DerivedData/mlx-swift-*/Build/Products/Debug/MLXTests.xctest
+          MLX_TEST_DISTRIBUTED=1 xcrun xctest -XCTest DistributedNNRingTests ~/Library/Developer/Xcode/DerivedData/mlx-swift-*/Build/Products/Debug/MLXTests.xctest
 
       - name: Build xcodeproj (Xcode, macOS)
         shell: sh
