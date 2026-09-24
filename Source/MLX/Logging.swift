@@ -106,25 +106,20 @@ public final class MLXLogger: @unchecked (Sendable) {
     // note: this avoids `lock.withLock { ... }` returning an existential --
     // that pattern crashes the Swift 6.3 compiler on Linux (SIL
     // ClosureLifetimeFixup pass)
-    private func _existingBacking() -> MLXLogHandler? {
-        lock.lock()
-        defer { lock.unlock() }
-        return backing
-    }
-
-    private func _setBacking(_ handler: MLXLogHandler) {
-        lock.lock()
-        defer { lock.unlock() }
-        self.backing = handler
-    }
-
+    //
+    // The check, the factory call and the assignment happen under one lock so
+    // that concurrent first logs all get the same handler rather than each
+    // creating one and overwriting the others.
     private func _backing() -> MLXLogHandler {
-        if let backing = _existingBacking() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let backing {
             return backing
         }
 
         let backing = Self.factory(label)
-        _setBacking(backing)
+        self.backing = backing
         return backing
     }
 
@@ -292,9 +287,14 @@ public struct StderrHandler: MLXLogHandler {
         line: UInt
     ) {
         if level >= Self.lock.withLock({ Self._logLevel }) {
-            let ts = Date().formatted(date: .numeric, time: .standard)
-            let message = "\(ts) [\(level)]: \(message())\n"
+            let message = formatted(level: level, message: message(), date: Date())
             FileHandle.standardError.write(Data(message.utf8))
         }
+    }
+
+    /// The line written for a record, e.g. `9/24/2026, 10:15:00 AM [info] KVCache: message`.
+    func formatted(level: LogLevel, message: String, date: Date) -> String {
+        let ts = date.formatted(date: .numeric, time: .standard)
+        return "\(ts) [\(level)] \(label): \(message)\n"
     }
 }

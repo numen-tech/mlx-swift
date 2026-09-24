@@ -1,8 +1,9 @@
 // Copyright © 2026 Apple Inc.
 
 import Foundation
-import MLX
 import Testing
+
+@testable import MLX
 
 private let lock = NSLock()
 nonisolated(unsafe) private var logs = [String: [String]]()
@@ -65,6 +66,34 @@ nonisolated(unsafe) private var logs = [String: [String]]()
         }
     #endif
 
+    @Test func testConcurrentFirstLogsShareOneHandler() async throws {
+        // every thread logging through a new logger must get the same handler:
+        // the factory runs once and every record reaches it
+        let created = Counter()
+        let previous = MLXLogger.factory
+        defer { MLXLogger.factory = previous }
+        MLXLogger.factory = { label in
+            created.increment()
+            return CollectHandler(label: label)
+        }
+
+        let logger = MLXLogger(label: "case4")
+        let count = 64
+        DispatchQueue.concurrentPerform(iterations: count) { i in
+            logger.info("message \(i)")
+        }
+
+        #expect(created.value == 1)
+        let list = lock.withLock { logs["case4"] ?? [] }
+        #expect(list.count == count)
+    }
+
+    @Test func testStderrLineHasLabel() {
+        let line = StderrHandler(label: "KVCache").formatted(
+            level: .warning, message: "evicted", date: Date(timeIntervalSince1970: 0))
+        #expect(line.hasSuffix(" [warning] KVCache: evicted\n"))
+    }
+
     @Test func testStderr() async throws {
         StderrHandler.install()
         let logger = MLXLogger(label: "case3")
@@ -81,4 +110,17 @@ nonisolated(unsafe) private var logs = [String: [String]]()
         #expect(list == nil)
     }
 
+}
+
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func increment() {
+        lock.withLock { count += 1 }
+    }
+
+    var value: Int {
+        lock.withLock { count }
+    }
 }
