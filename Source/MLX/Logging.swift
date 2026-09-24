@@ -237,17 +237,22 @@ extension MLXLogger {
             message: () -> String, metadata: () -> [String: String]?,
             file: StaticString, function: StaticString, line: UInt
         ) {
-            let level: OSLogType =
-                switch level {
-                case .trace: .debug
-                case .debug: .debug
-                case .info: .info
-                case .warning: .error
-                case .error: .error
-                }
+            let level = Self.osLogType(for: level)
             if logger.isEnabled(type: level) {
                 let message = message() + metadataSuffix(metadata())
                 logger.log(level: level, "\(message, privacy: .public)")
+            }
+        }
+
+        /// The OSLog type a record is logged at: a warning is `.default` (notice),
+        /// so it stays distinguishable from an error.
+        static func osLogType(for level: LogLevel) -> OSLogType {
+            switch level {
+            case .trace: .debug
+            case .debug: .debug
+            case .info: .info
+            case .warning: .default
+            case .error: .error
             }
         }
     }

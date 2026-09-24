@@ -64,6 +64,13 @@ nonisolated(unsafe) private var logs = [String: [String]]()
             }
             #expect(list == nil)
         }
+
+        @Test func testOSLogKeepsWarningsApartFromErrors() {
+            #expect(OSLogHandler.osLogType(for: .warning) == .default)
+            #expect(OSLogHandler.osLogType(for: .error) == .error)
+            #expect(OSLogHandler.osLogType(for: .info) == .info)
+            #expect(OSLogHandler.osLogType(for: .debug) == .debug)
+        }
     #endif
 
     @Test func testConcurrentFirstLogsShareOneHandler() async throws {
