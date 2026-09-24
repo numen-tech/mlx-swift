@@ -710,12 +710,13 @@ open class Adafactor: OptimizerBase<Adafactor.State> {
             relativeStepSize = MLXArray(learningRate!)
         }
 
-        var parameterScale = MLXArray(1.0)
+        // in the parameter's dtype, as Python does, so a float16 parameter isn't
+        // promoted to float32 by the step count or learning rate
+        let stepSize = relativeStepSize.asType(parameterRMS.dtype)
         if scaleParameter {
-            parameterScale = maximum(eps.1, parameterRMS)
+            return maximum(eps.1, parameterRMS) * stepSize
         }
-
-        return parameterScale * relativeStepSize
+        return stepSize
     }
 
     func approvateExpMovingAverage(expAvgSqRow: MLXArray, expAvgSqCol: MLXArray) -> MLXArray {
@@ -726,12 +727,13 @@ open class Adafactor: OptimizerBase<Adafactor.State> {
         return rFactor.expandedDimensions(axis: -1) * cFactor.expandedDimensions(axis: -2)
     }
 
-    /// The existing state if it has `shape`, otherwise fresh zeros -- a parameter's
-    /// shape can change between updates, and stale state must not be broadcast into it.
+    /// The existing state if it has `shape` and the gradient's dtype, otherwise fresh
+    /// zeros -- a parameter's shape or dtype can change between updates, and stale state
+    /// must not be broadcast into it or promote the update to its old dtype.
     private func reusable(_ existing: MLXArray?, shape: [Int], like gradient: MLXArray)
         -> MLXArray
     {
-        if let existing, existing.shape == shape {
+        if let existing, existing.shape == shape, existing.dtype == gradient.dtype {
             return existing
         }
         return MLXArray.zeros(shape, dtype: gradient.dtype)
@@ -749,7 +751,7 @@ open class Adafactor: OptimizerBase<Adafactor.State> {
 
         let parameterRMS = rms(parameter)
         let learningRate = computeLearningRate(step: step, parameterRMS: parameterRMS)
-        let beta2 = 1.0 - pow(step, decayRate)
+        let beta2 = 1.0 - pow(step, decayRate).asType(parameterRMS.dtype)
 
         var update = square(gradient) + eps.0
 

@@ -421,6 +421,24 @@ class OptimizerTests: XCTestCase {
         }
     }
 
+    func testAdafactorDTypeChangeRecreatesState() {
+        // same shape, new dtype: float32 moments left from the first call must not
+        // promote the float16 update (nor may the step count or learning rate)
+        let optimizer = Adafactor(learningRate: 0.1, beta1: 0.9, relativeStep: false)
+
+        for dtype in [DType.float32, .float16] {
+            let parameters = ModuleParameters.unflattened([
+                ("w", MLXArray.ones([3, 4], dtype: dtype))
+            ])
+            let updated = optimizer.apply(
+                gradients: parameters.mapValues { 0.5 * $0 }, modelParameters: parameters)
+            let w = updated[unwrapping: "w"]!
+            eval(w)
+
+            XCTAssertEqual(w.dtype, dtype)
+        }
+    }
+
     class TwoParameterModel: Module {
         let weight = MLXArray.zeros([3])
         let bias = MLXArray.zeros([3])
