@@ -361,6 +361,66 @@ func shardingEdgeCasesBody(world: MLXDistributed.Group) throws {
             error as? ShardingError, .invalidSegments(.count(3), dimension: 8 * world.size))
     }
 
+    // Explicit boundaries are checked the same way: out of order, out of range,
+    // repeated (an empty segment) or non-finite would reach split(indices:) or
+    // trap converting NaN to Int.
+    let dimension = 8 * world.size
+    let invalid: [Segments] = [
+        .indices([5, 3]), .indices([0]), .indices([dimension]), .indices([-1]),
+        .indices([3, 3]), .fractions([0.75, 0.25]), .fractions([1.5]), .fractions([0]),
+        .fractions([.nan]), .fractions([.infinity]),
+    ]
+    for segments in invalid {
+        for sharding in [ShardingType.allToSharded, .shardedToAll] {
+            XCTAssertThrowsError(
+                try shardLinear(
+                    Linear(dimension, dimension), sharding: sharding, segments: segments,
+                    group: world),
+                "\(segments) \(sharding)"
+            ) { error in
+                // pattern match: .nan does not compare equal to itself
+                guard case .invalidSegments(_, dimension) = error as? ShardingError else {
+                    return XCTFail("\(segments) \(sharding): \(error)")
+                }
+            }
+        }
+    }
+
+    // The collectives run on the stream the layer was given -- an NCCL group
+    // needs the GPU -- and quantizing keeps it.
+    let stream = StreamOrDevice.stream(Stream(.cpu))
+    let sharded = [
+        // quantizable shards: every sharded input dimension a multiple of the group size
+        try shardLinear(
+            Linear(64 * world.size, 64 * world.size), sharding: .allToSharded, group: world,
+            stream: stream),
+        try shardLinear(
+            Linear(64 * world.size, 64 * world.size), sharding: .shardedToAll, group: world,
+            stream: stream),
+        try shardLinear(
+            QuantizedLinear(Linear(64 * world.size, 64)), sharding: .allToSharded,
+            group: world, stream: stream),
+        try shardLinear(
+            QuantizedLinear(Linear(64 * world.size, 64)), sharding: .shardedToAll,
+            group: world, stream: stream),
+    ]
+    func streamOf(_ layer: Module) -> StreamOrDevice? {
+        switch layer {
+        case let layer as QuantizedAllToShardedLinear: layer.stream
+        case let layer as QuantizedShardedToAllLinear: layer.stream
+        case let layer as AllToShardedLinear: layer.stream
+        case let layer as ShardedToAllLinear: layer.stream
+        default: nil
+        }
+    }
+    for layer in sharded {
+        XCTAssertEqual(streamOf(layer), stream, "\(type(of: layer))")
+    }
+    for layer in sharded.prefix(2) {
+        let quantized = layer.toQuantized(groupSize: 64, bits: 4, mode: .affine)
+        XCTAssertEqual(streamOf(quantized), stream, "\(type(of: quantized))")
+    }
+
     // A QuantizedLinear is a Linear, so the float layers accept one as far as
     // the compiler is concerned, but they would keep its packed weight as a
     // float weight and drop its scales.

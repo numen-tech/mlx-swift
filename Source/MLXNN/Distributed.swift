@@ -29,8 +29,12 @@ public enum Segments: Sendable, Equatable {
     /// The positions that separate the segments of an axis of length `dimension`.
     ///
     /// Throws if `count` equally sized segments do not fit, which
-    /// `split(parts:)` would report with a `fatalError`.
+    /// `split(parts:)` would report with a `fatalError`, or if the explicit
+    /// boundaries are not strictly increasing positions inside the axis -- those
+    /// would reach `split(indices:)` as out-of-range or empty segments, and a
+    /// non-finite fraction would trap converting to `Int`.
     func boundaries(of dimension: Int) throws -> [Int] {
+        let boundaries: [Int]
         switch self {
         case .count(let count):
             guard count >= 1, dimension % count == 0 else {
@@ -38,10 +42,19 @@ public enum Segments: Sendable, Equatable {
             }
             return (1 ..< count).map { $0 * dimension / count }
         case .indices(let indices):
-            return indices
+            boundaries = indices
         case .fractions(let fractions):
-            return fractions.map { Int($0 * Double(dimension)) }
+            guard fractions.allSatisfy({ $0.isFinite && $0 > 0 && $0 < 1 }) else {
+                throw ShardingError.invalidSegments(self, dimension: dimension)
+            }
+            boundaries = fractions.map { Int($0 * Double(dimension)) }
         }
+
+        let edges = [0] + boundaries + [dimension]
+        guard zip(edges, edges.dropFirst()).allSatisfy({ $0 < $1 }) else {
+            throw ShardingError.invalidSegments(self, dimension: dimension)
+        }
+        return boundaries
     }
 }
 
@@ -58,7 +71,7 @@ public enum ShardingError: Error, CustomStringConvertible, Equatable {
 
     /// A ``QuantizedLinear`` was given to a float sharded layer.
     ///
-    /// ``shardLinear(_:sharding:segments:group:)`` returns the quantized flavor.
+    /// ``shardLinear(_:sharding:segments:group:stream:)`` returns the quantized flavor.
     case quantizedLayer
 
     /// The layer being sharded is missing a parameter.
@@ -90,8 +103,12 @@ public enum ShardingError: Error, CustomStringConvertible, Equatable {
 /// Returns a function that is the identity in the forward pass and sums the
 /// gradients across the group in the backward pass.
 ///
-/// - Parameter group: the group to sum across
-public func sumGradients(group: MLXDistributed.Group) -> (MLXArray) -> MLXArray {
+/// - Parameters:
+///   - group: the group to sum across
+///   - stream: stream to evaluate the sum on; pass `.gpu` for an NCCL group
+public func sumGradients(group: MLXDistributed.Group, stream: StreamOrDevice = .cpu)
+    -> (MLXArray) -> MLXArray
+{
     if group.size == 1 {
         return { $0 }
     }
@@ -101,7 +118,7 @@ public func sumGradients(group: MLXDistributed.Group) -> (MLXArray) -> MLXArray 
             inputs
         }
         VJP { _, cotangents in
-            cotangents.map { MLXDistributed.allSum($0, group: group) }
+            cotangents.map { MLXDistributed.allSum($0, group: group, stream: stream) }
         }
     }
 
@@ -197,12 +214,6 @@ private func quantizedShardedToAllPredicate(
     _ segments: Segments, inputDimensions: Int, groupSize: Int, size: Int
 ) throws -> ShardingPredicate {
     let boundaries = try segments.boundaries(of: inputDimensions)
-    guard boundaries == boundaries.sorted(),
-        boundaries.allSatisfy({ (0 ... inputDimensions).contains($0) })
-    else {
-        throw ShardingError.invalidSegments(segments, dimension: inputDimensions)
-    }
-
     let edges = [0] + boundaries + [inputDimensions]
     for (start, end) in zip(edges, edges.dropFirst()) {
         guard (end - start) % (groupSize * size) == 0 else {
@@ -268,26 +279,28 @@ public func shardInPlace(
 ///   - sharding: the kind of sharding to apply
 ///   - segments: the segments that comprise each unsharded weight
 ///   - group: the group to shard across, or `nil` to use the global group
+///   - stream: stream to evaluate the layer's collectives on; pass `.gpu` for an
+///     NCCL group
 /// - Returns: the sharded layer, which can replace `layer` in a model
 public func shardLinear(
     _ layer: Linear, sharding: ShardingType, segments: Segments = .count(1),
-    group: MLXDistributed.Group? = nil
+    group: MLXDistributed.Group? = nil, stream: StreamOrDevice = .cpu
 ) throws -> Linear {
     // QuantizedLinear is a Linear, so it has to be matched first
     if let layer = layer as? QuantizedLinear {
         return switch sharding {
         case .allToSharded:
-            try QuantizedAllToShardedLinear(layer, segments: segments, group: group)
+            try QuantizedAllToShardedLinear(layer, segments: segments, group: group, stream: stream)
         case .shardedToAll:
-            try QuantizedShardedToAllLinear(layer, segments: segments, group: group)
+            try QuantizedShardedToAllLinear(layer, segments: segments, group: group, stream: stream)
         }
     }
 
     return switch sharding {
     case .allToSharded:
-        try AllToShardedLinear(layer, segments: segments, group: group)
+        try AllToShardedLinear(layer, segments: segments, group: group, stream: stream)
     case .shardedToAll:
-        try ShardedToAllLinear(layer, segments: segments, group: group)
+        try ShardedToAllLinear(layer, segments: segments, group: group, stream: stream)
     }
 }
 
@@ -302,6 +315,9 @@ open class AllToShardedLinear: Linear {
     /// The group the output dimensions are sharded across.
     public let group: MLXDistributed.Group
 
+    /// The stream the collectives are evaluated on.
+    public let stream: StreamOrDevice
+
     private let aggregateGradients: (MLXArray) -> MLXArray
 
     /// - Parameters:
@@ -309,9 +325,10 @@ open class AllToShardedLinear: Linear {
     ///   - outputDimensions: number of output dimensions, sharded across the group
     ///   - bias: if `true` this layer will apply a bias
     ///   - group: the group to shard across, or `nil` to use the global group
+    ///   - stream: stream to evaluate the collectives on; pass `.gpu` for an NCCL group
     public init(
         _ inputDimensions: Int, _ outputDimensions: Int, bias: Bool = true,
-        group: MLXDistributed.Group? = nil
+        group: MLXDistributed.Group? = nil, stream: StreamOrDevice = .cpu
     ) throws {
         let group = try group ?? MLXDistributed.initialize()
         guard outputDimensions % group.size == 0 else {
@@ -320,7 +337,8 @@ open class AllToShardedLinear: Linear {
         }
 
         self.group = group
-        self.aggregateGradients = sumGradients(group: group)
+        self.stream = stream
+        self.aggregateGradients = sumGradients(group: group, stream: stream)
 
         let scale = sqrt(1.0 / Float(inputDimensions))
         let shardedOutput = outputDimensions / group.size
@@ -330,18 +348,23 @@ open class AllToShardedLinear: Linear {
     }
 
     /// Hold parameters that are already this process' shard.
-    init(shardedWeight weight: MLXArray, bias: MLXArray?, group: MLXDistributed.Group) {
+    init(
+        shardedWeight weight: MLXArray, bias: MLXArray?, group: MLXDistributed.Group,
+        stream: StreamOrDevice
+    ) {
         self.group = group
-        self.aggregateGradients = sumGradients(group: group)
+        self.stream = stream
+        self.aggregateGradients = sumGradients(group: group, stream: stream)
         super.init(weight: weight, bias: bias)
     }
 
     /// Create a sharded layer from an existing ``Linear``.
     ///
     /// Throws for a ``QuantizedLinear``: shard it with
-    /// ``shardLinear(_:sharding:segments:group:)`` or ``QuantizedAllToShardedLinear``.
+    /// ``shardLinear(_:sharding:segments:group:stream:)`` or ``QuantizedAllToShardedLinear``.
     public convenience init(
-        _ other: Linear, segments: Segments = .count(1), group: MLXDistributed.Group? = nil
+        _ other: Linear, segments: Segments = .count(1), group: MLXDistributed.Group? = nil,
+        stream: StreamOrDevice = .cpu
     ) throws {
         // a QuantizedLinear is a Linear, but its packed weight is not a float one
         guard !(other is QuantizedLinear) else {
@@ -363,7 +386,8 @@ open class AllToShardedLinear: Linear {
             throw ShardingError.missingParameter("weight")
         }
 
-        self.init(shardedWeight: weight, bias: parameters["bias"], group: group)
+        self.init(
+            shardedWeight: weight, bias: parameters["bias"], group: group, stream: stream)
     }
 
     open override func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -384,7 +408,7 @@ open class AllToShardedLinear: Linear {
     public override func toQuantized(groupSize: Int, bits: Int, mode: QuantizationMode) -> Module {
         QuantizedAllToShardedLinear(
             shardedWeight: weight, bias: bias, groupSize: groupSize, bits: bits, mode: mode,
-            group: group)
+            group: group, stream: stream)
     }
 }
 
@@ -399,14 +423,18 @@ open class ShardedToAllLinear: Linear {
     /// The group the input dimensions are sharded across.
     public let group: MLXDistributed.Group
 
+    /// The stream the collectives are evaluated on.
+    public let stream: StreamOrDevice
+
     /// - Parameters:
     ///   - inputDimensions: number of input dimensions, sharded across the group
     ///   - outputDimensions: number of output dimensions
     ///   - bias: if `true` this layer will apply a bias
     ///   - group: the group to shard across, or `nil` to use the global group
+    ///   - stream: stream to evaluate the collectives on; pass `.gpu` for an NCCL group
     public init(
         _ inputDimensions: Int, _ outputDimensions: Int, bias: Bool = true,
-        group: MLXDistributed.Group? = nil
+        group: MLXDistributed.Group? = nil, stream: StreamOrDevice = .cpu
     ) throws {
         let group = try group ?? MLXDistributed.initialize()
         guard inputDimensions % group.size == 0 else {
@@ -415,6 +443,7 @@ open class ShardedToAllLinear: Linear {
         }
 
         self.group = group
+        self.stream = stream
 
         // Each process holds its own slice of the weight, but the bias is
         // added after the reduction, so every process has to hold the same
@@ -430,17 +459,22 @@ open class ShardedToAllLinear: Linear {
     }
 
     /// Hold parameters that are already this process' shard.
-    init(shardedWeight weight: MLXArray, bias: MLXArray?, group: MLXDistributed.Group) {
+    init(
+        shardedWeight weight: MLXArray, bias: MLXArray?, group: MLXDistributed.Group,
+        stream: StreamOrDevice
+    ) {
         self.group = group
+        self.stream = stream
         super.init(weight: weight, bias: bias)
     }
 
     /// Create a sharded layer from an existing ``Linear``.
     ///
     /// Throws for a ``QuantizedLinear``: shard it with
-    /// ``shardLinear(_:sharding:segments:group:)`` or ``QuantizedShardedToAllLinear``.
+    /// ``shardLinear(_:sharding:segments:group:stream:)`` or ``QuantizedShardedToAllLinear``.
     public convenience init(
-        _ other: Linear, segments: Segments = .count(1), group: MLXDistributed.Group? = nil
+        _ other: Linear, segments: Segments = .count(1), group: MLXDistributed.Group? = nil,
+        stream: StreamOrDevice = .cpu
     ) throws {
         // a QuantizedLinear is a Linear, but its packed weight is not a float one
         guard !(other is QuantizedLinear) else {
@@ -462,14 +496,15 @@ open class ShardedToAllLinear: Linear {
             throw ShardingError.missingParameter("weight")
         }
 
-        self.init(shardedWeight: weight, bias: parameters["bias"], group: group)
+        self.init(
+            shardedWeight: weight, bias: parameters["bias"], group: group, stream: stream)
     }
 
     open override func callAsFunction(_ x: MLXArray) -> MLXArray {
         // each process holds part of the sum, and the bias belongs to the
         // whole, so it is added after the reduction
         var x = matmul(x, weight.T)
-        x = MLXDistributed.allSum(x, group: group)
+        x = MLXDistributed.allSum(x, group: group, stream: stream)
 
         if let bias {
             x = x + bias
@@ -481,7 +516,7 @@ open class ShardedToAllLinear: Linear {
     public override func toQuantized(groupSize: Int, bits: Int, mode: QuantizationMode) -> Module {
         QuantizedShardedToAllLinear(
             shardedWeight: weight, bias: bias, groupSize: groupSize, bits: bits, mode: mode,
-            group: group)
+            group: group, stream: stream)
     }
 }
 
@@ -493,15 +528,20 @@ open class QuantizedAllToShardedLinear: QuantizedLinear {
     /// The group the output dimensions are sharded across.
     public let group: MLXDistributed.Group
 
+    /// The stream the collectives are evaluated on.
+    public let stream: StreamOrDevice
+
     private let aggregateGradients: (MLXArray) -> MLXArray
 
     /// Quantize a weight that is already this process' shard.
     public init(
         shardedWeight weight: MLXArray, bias: MLXArray?, groupSize: Int = 64, bits: Int = 4,
-        mode: QuantizationMode = .affine, group: MLXDistributed.Group
+        mode: QuantizationMode = .affine, group: MLXDistributed.Group,
+        stream: StreamOrDevice = .cpu
     ) {
         self.group = group
-        self.aggregateGradients = sumGradients(group: group)
+        self.stream = stream
+        self.aggregateGradients = sumGradients(group: group, stream: stream)
         super.init(weight: weight, bias: bias, groupSize: groupSize, bits: bits, mode: mode)
     }
 
@@ -509,10 +549,11 @@ open class QuantizedAllToShardedLinear: QuantizedLinear {
     init(
         shardedQuantizedWeight weight: MLXArray, bias: MLXArray?, scales: MLXArray,
         biases: MLXArray?, groupSize: Int, bits: Int, mode: QuantizationMode,
-        globalScale: MLXArray?, group: MLXDistributed.Group
+        globalScale: MLXArray?, group: MLXDistributed.Group, stream: StreamOrDevice
     ) {
         self.group = group
-        self.aggregateGradients = sumGradients(group: group)
+        self.stream = stream
+        self.aggregateGradients = sumGradients(group: group, stream: stream)
         super.init(
             weight: weight, bias: bias, scales: scales, biases: biases, groupSize: groupSize,
             bits: bits, mode: mode, globalScale: globalScale)
@@ -525,7 +566,7 @@ open class QuantizedAllToShardedLinear: QuantizedLinear {
     /// so they shard together along the output dimension.
     public convenience init(
         _ other: QuantizedLinear, segments: Segments = .count(1),
-        group: MLXDistributed.Group? = nil
+        group: MLXDistributed.Group? = nil, stream: StreamOrDevice = .cpu
     ) throws {
         let group = try group ?? MLXDistributed.initialize()
         let (outputDimensions, _) = other.shape
@@ -548,7 +589,8 @@ open class QuantizedAllToShardedLinear: QuantizedLinear {
         self.init(
             shardedQuantizedWeight: weight, bias: parameters["bias"], scales: scales,
             biases: parameters["biases"], groupSize: other.groupSize, bits: other.bits,
-            mode: other.mode, globalScale: parameters["global_scale"], group: group)
+            mode: other.mode, globalScale: parameters["global_scale"], group: group,
+            stream: stream)
     }
 
     open override func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -566,12 +608,17 @@ open class QuantizedShardedToAllLinear: QuantizedLinear {
     /// The group the input dimensions are sharded across.
     public let group: MLXDistributed.Group
 
+    /// The stream the collectives are evaluated on.
+    public let stream: StreamOrDevice
+
     /// Quantize a weight that is already this process' shard.
     public init(
         shardedWeight weight: MLXArray, bias: MLXArray?, groupSize: Int = 64, bits: Int = 4,
-        mode: QuantizationMode = .affine, group: MLXDistributed.Group
+        mode: QuantizationMode = .affine, group: MLXDistributed.Group,
+        stream: StreamOrDevice = .cpu
     ) {
         self.group = group
+        self.stream = stream
         super.init(weight: weight, bias: bias, groupSize: groupSize, bits: bits, mode: mode)
     }
 
@@ -579,9 +626,10 @@ open class QuantizedShardedToAllLinear: QuantizedLinear {
     init(
         shardedQuantizedWeight weight: MLXArray, bias: MLXArray?, scales: MLXArray,
         biases: MLXArray?, groupSize: Int, bits: Int, mode: QuantizationMode,
-        globalScale: MLXArray?, group: MLXDistributed.Group
+        globalScale: MLXArray?, group: MLXDistributed.Group, stream: StreamOrDevice
     ) {
         self.group = group
+        self.stream = stream
         super.init(
             weight: weight, bias: bias, scales: scales, biases: biases, groupSize: groupSize,
             bits: bits, mode: mode, globalScale: globalScale)
@@ -594,7 +642,7 @@ open class QuantizedShardedToAllLinear: QuantizedLinear {
     /// segment has to hold whole quantization groups on every process.
     public convenience init(
         _ other: QuantizedLinear, segments: Segments = .count(1),
-        group: MLXDistributed.Group? = nil
+        group: MLXDistributed.Group? = nil, stream: StreamOrDevice = .cpu
     ) throws {
         let group = try group ?? MLXDistributed.initialize()
         let (_, inputDimensions) = other.shape
@@ -620,7 +668,8 @@ open class QuantizedShardedToAllLinear: QuantizedLinear {
         self.init(
             shardedQuantizedWeight: weight, bias: parameters["bias"], scales: scales,
             biases: parameters["biases"], groupSize: other.groupSize, bits: other.bits,
-            mode: other.mode, globalScale: parameters["global_scale"], group: group)
+            mode: other.mode, globalScale: parameters["global_scale"], group: group,
+            stream: stream)
     }
 
     open override func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -630,7 +679,7 @@ open class QuantizedShardedToAllLinear: QuantizedLinear {
             x, weight, scales: scales, biases: biases, transpose: true, groupSize: groupSize,
             bits: bits, mode: mode)
         x = applyNVFP4GlobalScale(x, globalScale: globalScale)
-        x = MLXDistributed.allSum(x, group: group)
+        x = MLXDistributed.allSum(x, group: group, stream: stream)
 
         if let bias {
             x = x + bias
