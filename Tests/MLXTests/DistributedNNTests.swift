@@ -421,6 +421,20 @@ func shardingEdgeCasesBody(world: MLXDistributed.Group) throws {
         XCTAssertEqual(streamOf(quantized), stream, "\(type(of: quantized))")
     }
 
+    // Sharding keeps what the source layer froze, whole or by key.
+    for keys: [String]? in [["weight"], nil] {
+        for sharding in [ShardingType.allToSharded, .shardedToAll] {
+            let linear = Linear(dimension, dimension)
+            linear.freeze(keys: keys)
+            let layer = try shardLinear(linear, sharding: sharding, group: world)
+            XCTAssertEqual(layer.noGrad(), linear.noGrad(), "\(sharding) \(keys ?? [])")
+            XCTAssertEqual(
+                Set(layer.trainableParameters().flattened().map(\.0)),
+                Set(linear.trainableParameters().flattened().map(\.0)),
+                "\(sharding) \(keys ?? [])")
+        }
+    }
+
     // A QuantizedLinear is a Linear, so the float layers accept one as far as
     // the compiler is concerned, but they would keep its packed weight as a
     // float weight and drop its scales.

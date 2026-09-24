@@ -388,6 +388,8 @@ open class AllToShardedLinear: Linear {
 
         self.init(
             shardedWeight: weight, bias: parameters["bias"], group: group, stream: stream)
+        // a new module has nothing frozen: keep what the source layer froze
+        freeze(recursive: false, keys: Array(other.noGrad()))
     }
 
     open override func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -498,6 +500,8 @@ open class ShardedToAllLinear: Linear {
 
         self.init(
             shardedWeight: weight, bias: parameters["bias"], group: group, stream: stream)
+        // a new module has nothing frozen: keep what the source layer froze
+        freeze(recursive: false, keys: Array(other.noGrad()))
     }
 
     open override func callAsFunction(_ x: MLXArray) -> MLXArray {
