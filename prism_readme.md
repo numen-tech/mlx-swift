@@ -35,11 +35,12 @@ checked in, already regenerated from that submodule.
 
 Kernel and host changes go to the MLX C++ fork, [numen-tech/mlx](https://github.com/numen-tech/mlx)
 (Metal kernels in `mlx/backend/metal/kernels/quantized.h`, dispatch in `mlx/backend/metal/quantized.cpp`).
-This branch tracks MLX 0.32.2: the submodule must sit at the head of
-[numen-tech/mlx#2](https://github.com/numen-tech/mlx/pull/2) (`fork/86-affine-sym-0.32.2`; the
-`prism-0.32.2-fixes` tip once that PR has merged), never at the pre-#2 `prism-0.32.2-fixes` tip: at
-`e1971918` the header has no `affine_sym`, so a regeneration from it silently drops the bias-free
-1/2-bit kernels. Changes land here by bumping the `Source/Cmlx/mlx`
+This branch tracks MLX 0.32.2: the submodule sits on `prism-0.32.2-fixes` at or after
+[numen-tech/mlx#4](https://github.com/numen-tech/mlx/pull/4) (`fork/181-counters-reland`, which
+merges the bias-free affine kernels of #2 with the dispatch/commit/sync/wait counters of #3 that
+`GPUCounters` reads), never at the pre-#2 `prism-0.32.2-fixes` tip: at `e1971918` the header has no
+`affine_sym`, so a regeneration from it silently drops the bias-free 1/2-bit kernels, and before #4
+`mlx::core::metal::counters()` does not exist. Changes land here by bumping the `Source/Cmlx/mlx`
 submodule and regenerating:
 
 ```bash
