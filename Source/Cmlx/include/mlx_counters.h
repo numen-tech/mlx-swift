@@ -17,7 +17,10 @@ extern "C" {
  * - syncs: explicit stream synchronizations (`synchronize()`)
  * - waits: host blocking waits on GPU completion, counted per wait call
  *   (event waits from eval()/item() on an in-flight array, the
- *   waitUntilCompleted of every sync, CPU-stream fence spins)
+ *   waitUntilCompleted of every sync, CPU-stream fence spins, and the
+ *   scheduler's throttle waits: eval() blocking until an in-flight task
+ *   completes because too many tasks are active or active memory is over the
+ *   limit, counted only when a GPU task completed during the wait)
  *
  * Each counter is an independent relaxed atomic with no happens-before
  * relation to the GPU or to other encoding threads; a snapshot is four
