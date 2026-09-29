@@ -246,10 +246,7 @@ inline U qdot(
   U accum = 0;
 
   if (bits == 1) {
-    // Wider load: read 4 packed bytes as one 32-bit word (1 load instead of 4
-    // byte loads) and extract the same 32 one-bit weights. Little-endian bit
-    // order + accumulation order are preserved, so this is bit-exact vs the
-    // per-byte path while quartering the weight-load instruction count.
+    // 1-bit: read 32 packed weights as one 32-bit word.
     const device uint32_t* w32 = (const device uint32_t*)w;
     for (int i = 0; i < (values_per_thread / 32); i++) {
       uint32_t wb = w32[i];
@@ -862,14 +859,8 @@ METAL_FUNC void qmv_quad_impl(
   }
 }
 
-// Symmetric (bias-free) formats: the affine bias is a fixed function of the
-// scale, so kernels derive it instead of reading a biases buffer.
-// 1-bit (scale=2d, values ±d): bias = -scale/2. 2-bit ternary (scale=d,
-// values {-d,0,+d}): bias = -scale. Removes the bias stream (~10% of the
-// weight-stream bytes at 1-bit/g128); same ALU (sum_x is computed anyway).
-// bias_free is threaded through so the assert fires only when the symmetric
-// path is actually selected — the ternary at the call sites instantiates this
-// template for every bits value, including the affine-only widths.
+// Bias-free formats derive the bias from the scale: -scale/2 for 1-bit,
+// -scale for 2-bit.
 template <typename U, int bits, bool bias_free>
 METAL_FUNC U sym_derived_bias(U scale) {
   static_assert(
@@ -940,15 +931,8 @@ METAL_FUNC void qmv_fast_impl(
   }
 
   if (aligned_end < in_vec_size) {
-    // Partial last block (in_vec_size % block_size != 0). Reachable only from
-    // a host fast gate coarser than block_size (the 0.31.1 line's K % 512 gate
-    // with 1-bit K = 512 mod 1024); qmv_fast_k_alignment (quantized.cpp) keeps
-    // the gate exact here. Lanes past the end of the row contribute +0 (their
-    // x_thread, sum and scale would all be zero), so they skip the row loop
-    // instead of masking it: masking still ran qdot, whose weight reads for
-    // those lanes land past the end of the row and, for the last output rows,
-    // past the end of the weight buffer. Every lane still joins the simd_sum
-    // below. (numen-tech/gemma4-qat#179, Codex P1)
+    // Partial last block: lanes past the end of the row skip the loads (they
+    // would read past the weight buffer) and still join the simd_sum below.
     bool in_bounds =
         (aligned_end + simd_lid * values_per_thread) < in_vec_size;
     if (in_bounds) {
@@ -1868,13 +1852,8 @@ template <
       simd_lid);
 }
 
-// Bias-free (symmetric) decode kernels: no biases buffer; the affine bias is
-// derived from the scale in-kernel (see sym_derived_bias). Buffer indices
-// follow the affine_qmv* layout with the biases slot (buffer 2) left unbound:
-// since 0.32.2 the host qmv() binds x at buffer 3 whether or not a biases /
-// global_scale buffer is present. has_global_scale and results_per_simdgroup
-// mirror affine_qmv's template signature (the host instantiates every qmv
-// kernel with them) and are unused here, exactly as in affine_qmv.
+// Bias-free decode kernels: same buffer layout as affine_qmv* with the biases
+// slot (buffer 2) unbound; the bias comes from sym_derived_bias.
 template <
     typename T,
     int group_size,

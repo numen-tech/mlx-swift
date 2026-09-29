@@ -14,9 +14,12 @@
     ///   `Stream.synchronize()`).
     /// - `waits`: host blocking waits on GPU completion, counted once per wait *call* (not
     ///   blocking time): `eval(_:)` / `item()` on an array still in flight, a CPU stream
-    ///   waiting on a GPU event, and the `waitUntilCompleted` of every sync. MLX skips the
-    ///   wait when the array's event has already signaled, so an `eval(_:)` whose GPU work
-    ///   finished before the host checked records none.
+    ///   waiting on a GPU event, the `waitUntilCompleted` of every sync, and the scheduler's
+    ///   throttle waits: an `eval(_:)` that blocks until an in-flight task completes because
+    ///   too many tasks are active or active memory is over the limit. A throttle wait is
+    ///   counted only when a GPU task completed during it. MLX skips the event wait when the
+    ///   array's event has already signaled, so an `eval(_:)` whose GPU work finished before
+    ///   the host checked records none.
     ///
     /// The counters are independent relaxed atomics in the numen-tech/mlx fork's Metal
     /// backend (`mlx::core::metal::counters()`), exposed through the Cmlx `mlx_counters_*`
