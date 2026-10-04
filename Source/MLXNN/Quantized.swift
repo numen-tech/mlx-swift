@@ -231,8 +231,13 @@ open class QuantizedEmbedding: Embedding, Quantized {
     open override func callAsFunction(_ x: MLXArray) -> MLXArray {
         let s = x.shape
         let x = x.flattened()
+        // A 0-d `biases` is an implied-bias factor (bias = factor * scale, formed
+        // in the dequantize kernel; numen-tech/gemma4-qat#190): it has no rows to
+        // gather and is passed through as the scalar.
+        let gatheredBiases: MLXArray? =
+            if let biases { biases.ndim == 0 ? biases : biases[x] } else { nil }
         let out = dequantized(
-            weight[x], scales: scales[x], biases: biases == nil ? nil : biases![x],
+            weight[x], scales: scales[x], biases: gatheredBiases,
             groupSize: groupSize, bits: bits, mode: mode)
         return applyNVFP4GlobalScale(out, globalScale: globalScale).reshaped(s + [-1])
     }

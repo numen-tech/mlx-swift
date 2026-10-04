@@ -673,6 +673,28 @@ inline void dequantize(const device uint8_t* w, U scale, U bias, W w_local) {
   }
 }
 
+// Bias-free formats derive the bias from the scale: -scale/2 for 1-bit,
+// -scale for 2-bit.
+template <typename U, int bits, bool bias_free>
+METAL_FUNC U sym_derived_bias(U scale) {
+  static_assert(
+      !bias_free || bits == 1 || bits == 2,
+      "bias-free (symmetric) path is only defined for 1- and 2-bit formats");
+  return bits == 1 ? U(-0.5f) * scale : -scale;
+}
+
+// Per-group bias for the affine kernels. An implied bias is f * scale, formed
+// in T to match a bias materialized in the scales dtype.
+template <typename U, typename T, int bits, bool bias_free, bool implied_bias>
+METAL_FUNC U affine_bias(U scale, T f, T scale_t, const device T* bias) {
+  static_assert(
+      !(bias_free && implied_bias),
+      "bias_free and implied_bias are mutually exclusive");
+  return bias_free ? sym_derived_bias<U, bits, bias_free>(scale)
+      : implied_bias ? static_cast<U>(f * scale_t)
+                     : (U)bias[0];
+}
+
 template <
     typename T,
     short BROWS,
@@ -681,7 +703,8 @@ template <
     short reduction_dim,
     short tgp_size,
     short group_size,
-    short bits>
+    short bits,
+    bool implied_bias = false>
 struct QuantizedBlockLoader {
   static_assert(
       BCOLS <= group_size,
@@ -714,6 +737,7 @@ struct QuantizedBlockLoader {
   const device uint8_t* src;
   const device T* scales;
   const device T* biases;
+  const T bias_factor; // implied bias: the single factor f (see affine_bias)
 
   QuantizedBlockLoader(
       const device uint8_t* src_,
@@ -736,7 +760,13 @@ struct QuantizedBlockLoader {
         src(src_ + bi * src_ld * bytes_per_pack / pack_factor +
             bj * bytes_per_pack),
         scales(scales_ + bi * src_ld / group_size),
-        biases(biases_ + bi * src_ld / group_size) {}
+        biases(implied_bias ? biases_ : biases_ + bi * src_ld / group_size),
+        bias_factor(implied_bias ? biases_[0] : T(0)) {}
+
+  T load_bias(T scale) const thread {
+    return affine_bias<T, T, bits, false, implied_bias>(
+        scale, bias_factor, scale, biases);
+  }
 
   void load_unsafe() const thread {
     if (BCOLS_PACKED * BROWS < tgp_size && bi >= BROWS) {
@@ -744,7 +774,7 @@ struct QuantizedBlockLoader {
     }
 
     T scale = *scales;
-    T bias = *biases;
+    T bias = load_bias(scale);
     for (int i = 0; i < n_reads; i++) {
       dequantize<T, pack_factor, bits>(
           src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
@@ -771,7 +801,7 @@ struct QuantizedBlockLoader {
     }
 
     T scale = *scales;
-    T bias = *biases;
+    T bias = load_bias(scale);
     for (int i = 0; i < n_reads; i++) {
       dequantize<T, pack_factor, bits>(
           (device uint8_t*)(src + i * bytes_per_pack),
@@ -789,20 +819,31 @@ struct QuantizedBlockLoader {
         if (group_step_cnt == group_steps) {
           group_step_cnt = 0;
           scales++;
-          biases++;
+          if (!implied_bias) {
+            biases++;
+          }
         }
       } else {
         scales++;
-        biases++;
+        if (!implied_bias) {
+          biases++;
+        }
       }
     } else {
       scales += group_stride;
-      biases += group_stride;
+      if (!implied_bias) {
+        biases += group_stride;
+      }
     }
   }
 };
 
-template <typename T, int group_size, int bits, int D>
+template <
+    typename T,
+    int group_size,
+    int bits,
+    int D,
+    bool implied_bias = false>
 METAL_FUNC void qmv_quad_impl(
     const device uint32_t* w,
     const device T* scales,
@@ -826,6 +867,8 @@ METAL_FUNC void qmv_quad_impl(
   thread U x_thread[values_per_thread];
   thread U result[results_per_quadgroup] = {0};
 
+  const T f = implied_bias ? biases[0] : T(0);
+
   // Adjust positions
   const int in_vec_size_w = in_vec_size / pack_factor;
   const int in_vec_size_g = in_vec_size / group_size;
@@ -845,7 +888,7 @@ METAL_FUNC void qmv_quad_impl(
     const device T* bl = biases + row * in_vec_size_g * quads_per_simd;
 
     U s = sl[0];
-    U b = bl[0];
+    U b = affine_bias<U, T, bits, false, implied_bias>(s, f, sl[0], bl);
     if (row * quads_per_simd + out_row < out_vec_size) {
       result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
     }
@@ -859,17 +902,12 @@ METAL_FUNC void qmv_quad_impl(
   }
 }
 
-// Bias-free formats derive the bias from the scale: -scale/2 for 1-bit,
-// -scale for 2-bit.
-template <typename U, int bits, bool bias_free>
-METAL_FUNC U sym_derived_bias(U scale) {
-  static_assert(
-      !bias_free || bits == 1 || bits == 2,
-      "bias-free (symmetric) path is only defined for 1- and 2-bit formats");
-  return bits == 1 ? U(-0.5f) * scale : -scale;
-}
-
-template <typename T, int group_size, int bits, bool bias_free = false>
+template <
+    typename T,
+    int group_size,
+    int bits,
+    bool bias_free = false,
+    bool implied_bias = false>
 METAL_FUNC void qmv_fast_impl(
     const device uint32_t* w,
     const device T* scales,
@@ -897,6 +935,8 @@ METAL_FUNC void qmv_fast_impl(
   thread U x_thread[values_per_thread];
   thread U result[results_per_simdgroup] = {0};
 
+  const T f = implied_bias ? biases[0] : T(0);
+
   // Adjust positions
   const int in_vec_size_w = in_vec_size * bytes_per_pack / pack_factor;
   const int in_vec_size_g = in_vec_size / group_size;
@@ -920,7 +960,7 @@ METAL_FUNC void qmv_fast_impl(
       const device T* bl = biases + row * in_vec_size_g;
 
       U s = sl[0];
-      U b = bias_free ? sym_derived_bias<U, bits, bias_free>(s) : (U)bl[0];
+      U b = affine_bias<U, T, bits, bias_free, implied_bias>(s, f, sl[0], bl);
       result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
     }
 
@@ -944,7 +984,7 @@ METAL_FUNC void qmv_fast_impl(
         const device T* bl = biases + row * in_vec_size_g;
 
         U s = sl[0];
-        U b = bias_free ? sym_derived_bias<U, bits, bias_free>(s) : (U)bl[0];
+        U b = affine_bias<U, T, bits, bias_free, implied_bias>(s, f, sl[0], bl);
         result[row] +=
             qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
       }
@@ -959,7 +999,12 @@ METAL_FUNC void qmv_fast_impl(
   }
 }
 
-template <typename T, int group_size, int bits, bool bias_free = false>
+template <
+    typename T,
+    int group_size,
+    int bits,
+    bool bias_free = false,
+    bool implied_bias = false>
 METAL_FUNC void qmv_impl(
     const device uint32_t* w,
     const device T* scales,
@@ -987,6 +1032,8 @@ METAL_FUNC void qmv_impl(
 
   thread U x_thread[values_per_thread];
   thread U result[results_per_simdgroup] = {0};
+
+  const T f = implied_bias ? biases[0] : T(0);
 
   // Adjust positions
   const int in_vec_size_w = in_vec_size * bytes_per_pack / pack_factor;
@@ -1021,7 +1068,7 @@ METAL_FUNC void qmv_impl(
         const device T* bl = biases + row * in_vec_size_g;
 
         U s = sl[0];
-        U b = bias_free ? sym_derived_bias<U, bits, bias_free>(s) : (U)bl[0];
+        U b = affine_bias<U, T, bits, bias_free, implied_bias>(s, f, sl[0], bl);
         result[row] +=
             qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
       }
@@ -1047,7 +1094,7 @@ METAL_FUNC void qmv_impl(
         const device T* bl = biases + row * in_vec_size_g;
 
         U s = sl[0];
-        U b = bias_free ? sym_derived_bias<U, bits, bias_free>(s) : (U)bl[0];
+        U b = affine_bias<U, T, bits, bias_free, implied_bias>(s, f, sl[0], bl);
         result[row] += qdot_safe<U, values_per_thread, bits>(
             wl, x_thread, s, b, sum, remaining);
       }
@@ -1082,7 +1129,7 @@ METAL_FUNC void qmv_impl(
         const device T* bl = biases + row * in_vec_size_g;
 
         U s = sl[0];
-        U b = bias_free ? sym_derived_bias<U, bits, bias_free>(s) : (U)bl[0];
+        U b = affine_bias<U, T, bits, bias_free, implied_bias>(s, f, sl[0], bl);
         result[row] +=
             qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
       }
@@ -1106,7 +1153,7 @@ METAL_FUNC void qmv_impl(
         const device T* bl = biases + row * in_vec_size_g;
 
         U s = sl[0];
-        U b = bias_free ? sym_derived_bias<U, bits, bias_free>(s) : (U)bl[0];
+        U b = affine_bias<U, T, bits, bias_free, implied_bias>(s, f, sl[0], bl);
         result[row] += qdot_safe<U, values_per_thread, bits>(
             wl, x_thread, s, b, sum, remaining);
       }
@@ -1123,7 +1170,13 @@ METAL_FUNC void qmv_impl(
 // Affine analog of fp_qmv_wide. Weights carry a scale and bias per group, so
 // each group is decoded in 8-value sub-chunks (scale * q + bias, registers
 // bounded for any group_size) and reused across the vecs_per_tg vectors.
-template <typename T, int group_size, int bits, int vecs_per_tg, int k_lanes>
+template <
+    typename T,
+    int group_size,
+    int bits,
+    int vecs_per_tg,
+    int k_lanes,
+    bool implied_bias = false>
 METAL_FUNC void qmv_wide_impl(
     const device uint32_t* w,
     const device T* scales,
@@ -1156,6 +1209,7 @@ METAL_FUNC void qmv_wide_impl(
   const device uint8_t* wrow = (const device uint8_t*)w + row * in_vec_size_w;
   const device T* srow = scales + row * in_vec_size_g;
   const device T* brow = biases + row * in_vec_size_g;
+  const T f = implied_bias ? biases[0] : T(0);
 
   const device T* xv[vecs_per_tg];
   for (int v = 0; v < vecs_per_tg; v++) {
@@ -1168,7 +1222,8 @@ METAL_FUNC void qmv_wide_impl(
   // 8-value sub-chunks and reuse each chunk across the streamed vectors.
   for (int g = k_lane; g < in_vec_size_g; g += k_lanes) {
     U scale = srow[g];
-    U bias = brow[g];
+    U bias = affine_bias<U, T, bits, false, implied_bias>(
+        scale, f, srow[g], brow + g);
 #pragma unroll
     for (int sc = 0; sc < group_size / sub; sc++) {
       const int k0 = g * group_size + sc * sub;
@@ -1217,7 +1272,11 @@ METAL_FUNC void qmv_wide_impl(
   }
 }
 
-template <typename T, const int group_size, const int bits>
+template <
+    typename T,
+    const int group_size,
+    const int bits,
+    bool implied_bias = false>
 METAL_FUNC void qvm_impl(
     const device uint32_t* w,
     const device T* scales,
@@ -1253,6 +1312,8 @@ METAL_FUNC void qvm_impl(
   thread U bias = 0;
   thread U x_local = 0;
 
+  const T f = implied_bias ? biases[0] : T(0);
+
   // Adjust positions
   const int out_vec_size_w = out_vec_size * bytes_per_pack / pack_factor;
   const int out_vec_size_g = out_vec_size / group_size;
@@ -1273,7 +1334,8 @@ METAL_FUNC void qvm_impl(
     for (int i = 0; i < in_vec_size; i += block_size) {
       x_local = *x;
       scale = *scales;
-      bias = *biases;
+      bias = affine_bias<U, T, bits, false, implied_bias>(
+          scale, f, *scales, biases);
       w_local = *((device vec_w*)ws);
       qouter<U, tn * pack_factor, bits>(
           (thread uint8_t*)&w_local, x_local, scale, bias, result);
@@ -1287,7 +1349,8 @@ METAL_FUNC void qvm_impl(
     for (int i = block_size; i < in_vec_size; i += block_size) {
       x_local = *x;
       scale = *scales;
-      bias = *biases;
+      bias = affine_bias<U, T, bits, false, implied_bias>(
+          scale, f, *scales, biases);
       w_local = *((device vec_w*)ws);
 
       qouter<U, tn * pack_factor, bits>(
@@ -1301,7 +1364,8 @@ METAL_FUNC void qvm_impl(
     if (static_cast<int>(simd_lid) < remaining) {
       x_local = *x;
       scale = *scales;
-      bias = *biases;
+      bias = affine_bias<U, T, bits, false, implied_bias>(
+          scale, f, *scales, biases);
       w_local = *((device vec_w*)ws);
     } else {
       x_local = 0;
@@ -1334,7 +1398,8 @@ template <
     const bool aligned_N,
     const int BM = 32,
     const int BK = 32,
-    const int BN = 32>
+    const int BN = 32,
+    bool implied_bias = false>
 METAL_FUNC void qmm_t_impl(
     const device uint32_t* w,
     const device T* scales,
@@ -1376,7 +1441,8 @@ METAL_FUNC void qmm_t_impl(
       1,
       WM * WN * SIMD_SIZE,
       group_size,
-      bits>;
+      bits,
+      implied_bias>;
 
   // Set the block
   const int K_w = K * bytes_per_pack / pack_factor;
@@ -1389,7 +1455,9 @@ METAL_FUNC void qmm_t_impl(
   x += y_row * static_cast<int64_t>(K);
   wl += y_col * K_w;
   scales += y_col * K_g;
-  biases += y_col * K_g;
+  if (!implied_bias) {
+    biases += y_col * K_g;
+  }
   y += y_row * static_cast<int64_t>(N) + y_col;
 
   // Make the x loader and mma operation
@@ -1461,7 +1529,8 @@ template <
     const int bits,
     const int BM = 32,
     const int BK = 32,
-    const int BN = 32>
+    const int BN = 32,
+    bool implied_bias = false>
 METAL_FUNC void qmm_n_impl(
     const device uint32_t* w,
     const device T* scales,
@@ -1503,7 +1572,8 @@ METAL_FUNC void qmm_n_impl(
       0,
       WM * WN * SIMD_SIZE,
       group_size,
-      bits>;
+      bits,
+      implied_bias>;
 
   auto wl = (const device uint8_t*)w;
 
@@ -1513,7 +1583,9 @@ METAL_FUNC void qmm_n_impl(
   x += y_row * static_cast<int64_t>(K);
   wl += y_col * bytes_per_pack / pack_factor;
   scales += y_col / group_size;
-  biases += y_col / group_size;
+  if (!implied_bias) {
+    biases += y_col / group_size;
+  }
   y += y_row * static_cast<int64_t>(N) + y_col;
 
   // Make the x loader and mma operation
@@ -1684,7 +1756,15 @@ METAL_FUNC void adjust_matrix_offsets(
   y += tid.z * output_stride;
 }
 
-template <typename T, int group_size, int bits, int D, bool batched>
+// `implied_bias`: `biases` holds one factor f and the bias is f * scale. Zero
+// b_strides keep the pointer on f.
+template <
+    typename T,
+    int group_size,
+    int bits,
+    int D,
+    bool batched,
+    bool implied_bias = false>
 [[kernel]] void affine_qmv_quad(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
@@ -1723,7 +1803,7 @@ template <typename T, int group_size, int bits, int D, bool batched>
         b_strides,
         tid);
   }
-  qmv_quad_impl<T, group_size, bits, D>(
+  qmv_quad_impl<T, group_size, bits, D, implied_bias>(
       w,
       scales,
       biases,
@@ -1742,7 +1822,8 @@ template <
     int bits,
     bool batched,
     bool has_global_scale = false,
-    int results_per_simdgroup = 4>
+    int results_per_simdgroup = 4,
+    bool implied_bias = false>
 [[kernel]] void affine_qmv_fast(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
@@ -1781,7 +1862,7 @@ template <
         b_strides,
         tid);
   }
-  qmv_fast_impl<T, group_size, bits>(
+  qmv_fast_impl<T, group_size, bits, /*bias_free=*/false, implied_bias>(
       w,
       scales,
       biases,
@@ -1800,7 +1881,8 @@ template <
     const int bits,
     bool batched,
     bool has_global_scale = false,
-    int results_per_simdgroup = 4>
+    int results_per_simdgroup = 4,
+    bool implied_bias = false>
 [[kernel]] void affine_qmv(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
@@ -1839,7 +1921,7 @@ template <
         b_strides,
         tid);
   }
-  qmv_impl<T, group_size, bits>(
+  qmv_impl<T, group_size, bits, /*bias_free=*/false, implied_bias>(
       w,
       scales,
       biases,
@@ -1974,7 +2056,8 @@ template <
     int bits,
     int vecs_per_tg,
     int k_lanes,
-    bool batched>
+    bool batched,
+    bool implied_bias = false>
 [[kernel]] void affine_qmv_wide(
     const device uint32_t* w,
     const device T* scales,
@@ -2013,7 +2096,7 @@ template <
         b_strides,
         tid);
   }
-  qmv_wide_impl<T, group_size, bits, vecs_per_tg, k_lanes>(
+  qmv_wide_impl<T, group_size, bits, vecs_per_tg, k_lanes, implied_bias>(
       w,
       scales,
       biases,
@@ -2032,7 +2115,8 @@ template <
     const int group_size,
     const int bits,
     bool batched,
-    bool has_global_scale = false>
+    bool has_global_scale = false,
+    bool implied_bias = false>
 [[kernel]] void affine_qvm(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
@@ -2071,7 +2155,7 @@ template <
         b_strides,
         tid);
   }
-  qvm_impl<T, group_size, bits>(
+  qvm_impl<T, group_size, bits, implied_bias>(
       w,
       scales,
       biases,
@@ -2085,7 +2169,12 @@ template <
       simd_lid);
 }
 
-template <typename T, const int group_size, const int bits, int split_k = 32>
+template <
+    typename T,
+    const int group_size,
+    const int bits,
+    int split_k = 32,
+    bool implied_bias = false>
 [[kernel]] void affine_qvm_split_k(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
@@ -2131,7 +2220,7 @@ template <typename T, const int group_size, const int bits, int split_k = 32>
   // The in_vec_stride is the full K dimension, not the partition size
   int in_vec_stride = (split_k - 1) * in_vec_size + final_block_size;
 
-  qvm_impl<T, group_size, bits>(
+  qvm_impl<T, group_size, bits, implied_bias>(
       w,
       scales,
       biases,
@@ -2153,7 +2242,8 @@ template <
     const bool batched,
     const int BM = 32,
     const int BK = 32,
-    const int BN = 32>
+    const int BN = 32,
+    bool implied_bias = false>
 [[kernel]] void affine_qmm_t(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
@@ -2200,7 +2290,7 @@ template <
         b_strides,
         tid);
   }
-  qmm_t_impl<T, group_size, bits, aligned_N, BM, BK, BN>(
+  qmm_t_impl<T, group_size, bits, aligned_N, BM, BK, BN, implied_bias>(
       w,
       scales,
       biases,
@@ -2225,7 +2315,8 @@ template <
     const bool aligned_N,
     const int BM = 32,
     const int BK = 32,
-    const int BN = 32>
+    const int BN = 32,
+    bool implied_bias = false>
 [[kernel]] void affine_qmm_t_splitk(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
@@ -2256,10 +2347,12 @@ template <
   auto wl = (const device uint8_t*)w;
   wl += k_start * bytes_per_pack / pack_factor;
   scales += k_start / group_size;
-  biases += k_start / group_size;
+  if (!implied_bias) {
+    biases += k_start / group_size;
+  }
   y += tid.z * static_cast<int64_t>(split_k_partition_stride);
 
-  qmm_t_impl<T, group_size, bits, aligned_N, BM, BK, BN>(
+  qmm_t_impl<T, group_size, bits, aligned_N, BM, BK, BN, implied_bias>(
       (const device uint32_t*)wl,
       scales,
       biases,
@@ -2285,7 +2378,8 @@ template <
     bool has_global_scale = false,
     int BM = 32,
     int BK = 32,
-    int BN = 32>
+    int BN = 32,
+    bool implied_bias = false>
 [[kernel]] void affine_qmm_n(
     const device uint32_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
@@ -2334,7 +2428,7 @@ template <
         tid);
   }
 
-  qmm_n_impl<T, group_size, bits, BM, BK, BN>(
+  qmm_n_impl<T, group_size, bits, BM, BK, BN, implied_bias>(
       w, scales, biases, x, y, Xs, Ws, K, N, M, tid, lid, simd_gid, simd_lid);
 }
 
@@ -2986,7 +3080,12 @@ template <typename T, int group_size, int bits, bool has_global_scale = false>
   }
 }
 
-template <typename T, int group_size, int bits, bool has_global_scale = false>
+template <
+    typename T,
+    int group_size,
+    int bits,
+    bool has_global_scale = false,
+    bool implied_bias = false>
 [[kernel]] void affine_dequantize(
     const device uint8_t* w [[buffer(0)]],
     const device T* scales [[buffer(1)]],
@@ -3001,7 +3100,9 @@ template <typename T, int group_size, int bits, bool has_global_scale = false>
   size_t oindex = offset * pack_factor;
   size_t gindex = oindex / group_size;
   T scale = scales[gindex];
-  T bias = biases[gindex];
+  const T f = implied_bias ? biases[0] : T(0);
+  T bias = affine_bias<T, T, bits, false, implied_bias>(
+      scale, f, scale, biases + gindex);
 
   out += oindex;
 
