@@ -35,13 +35,14 @@ checked in, already regenerated from that submodule.
 
 Kernel and host changes go to the MLX C++ fork, [numen-tech/mlx](https://github.com/numen-tech/mlx)
 (Metal kernels in `mlx/backend/metal/kernels/quantized.h`, dispatch in `mlx/backend/metal/quantized.cpp`).
-This branch tracks MLX 0.32.2: the submodule sits on `prism-0.32.2-fixes` at or after
-[numen-tech/mlx#4](https://github.com/numen-tech/mlx/pull/4) (`fork/181-counters-reland`, which
-merges the bias-free affine kernels of #2 with the dispatch/commit/sync/wait counters of #3 that
-`GPUCounters` reads), never at the pre-#2 `prism-0.32.2-fixes` tip: at `e1971918` the header has no
-`affine_sym`, so a regeneration from it silently drops the bias-free 1/2-bit kernels, and before #4
-`mlx::core::metal::counters()` does not exist. Changes land here by bumping the `Source/Cmlx/mlx`
-submodule and regenerating:
+This branch tracks upstream MLX main (0.32.4): the submodule sits on numen-tech/mlx
+`fork/282-sync-upstream-main` ([numen-tech/mlx#10](https://github.com/numen-tech/mlx/pull/10)),
+upstream `06eb7483f` plus the fork's patch series (bias-free `affine_sym` kernels, implied bias,
+qmv_fast/qmv_wide routing, the dispatch/commit/sync/wait counters that `GPUCounters` reads, the
+kernel memo, the NAX gate, precise transcendentals and `spec_decode_verify`). Never regenerate from a
+core without those patches: without them the header has no `affine_sym`, so a regeneration silently
+drops the bias-free 1/2-bit kernels, and `mlx::core::metal::counters()` does not exist. Changes land
+here by bumping the `Source/Cmlx/mlx` submodule and regenerating:
 
 ```bash
 LC_ALL=C CC=$(xcrun -f clang) CXX=$(xcrun -f clang++) ./tools/update-mlx.sh
@@ -99,9 +100,12 @@ numen-tech/mlx#2, following upstream mlx#3965) sends a 1-bit matmul to `qmv_fast
 multiple of the fork kernel's 1024-value block (2-bit: 512) and everything else to the generic
 `qmv` -- so the 1-bit fast path stays on (mlx#3, ~+11% decode) and the partial tail block of
 `qmv_fast_impl` (still carried, with the inactive-lane skip of numen-tech/mlx `c431c502`, as
-`ab914a5b5`) is unreachable from this host. The `global_scale` patch is unnecessary because the
-pinned mlx-c (`c74db53`, v0.6.0 + 7 upstream commits) handles `global_scale` in its own bindings. Kernel and host changes live only in numen-tech/mlx — see "Changing kernels or host
-dispatch" above.
+`ab914a5b5`) is unreachable from this host. The original `global_scale` patch (passing
+`std::nullopt` for core arguments mlx-c did not bind) is gone: upstream mlx-c binds `global_scale`
+for quantize/dequantize/qqmm itself. Upstream MLX 0.32.3 then added `global_scale` to `gather_qmm`,
+which mlx-c v0.7.0 does not pass, so the pinned mlx-c is `cfc471f4` (v0.7.0 plus the open upstream
+fix ml-explore/mlx-c#137, which passes `std::nullopt` there). Kernel and host changes live only in
+numen-tech/mlx — see "Changing kernels or host dispatch" above.
 
 #### MLX-Swift level
 
