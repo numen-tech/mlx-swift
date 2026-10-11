@@ -103,8 +103,10 @@ multiple of the fork kernel's 1024-value block (2-bit: 512) and everything else 
 `ab914a5b5`) is unreachable from this host. The original `global_scale` patch (passing
 `std::nullopt` for core arguments mlx-c did not bind) is gone: upstream mlx-c binds `global_scale`
 for quantize/dequantize/qqmm itself. Upstream MLX 0.32.3 then added `global_scale` to `gather_qmm`,
-which mlx-c v0.7.0 does not pass, so the pinned mlx-c is `cfc471f4` (v0.7.0 plus the open upstream
-fix ml-explore/mlx-c#137, which passes `std::nullopt` there). Kernel and host changes live only in
+which mlx-c v0.7.0 does not pass, so the mlx-c submodule points at numen-tech/mlx-c branch
+`numen/0.7.0-gather-qmm-global-scale` (`cfc471f4`: v0.7.0 plus the open upstream fix
+ml-explore/mlx-c#137, which passes `std::nullopt` there). Re-pin to upstream mlx-c once #137 is in a
+release. Kernel and host changes live only in
 numen-tech/mlx — see "Changing kernels or host dispatch" above.
 
 #### MLX-Swift level
