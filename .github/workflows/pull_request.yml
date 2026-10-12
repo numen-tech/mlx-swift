@@ -1,6 +1,8 @@
 name: Build and Test
 
-on: pull_request
+on:
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -172,20 +174,26 @@ jobs:
   linux_build_cmake_container:
     name: Linux Container CMake Swift Build (${{ matrix.container }} ${{ matrix.arch }})
     needs: lint
+    if: github.repository == 'ml-explore/mlx-swift'
     strategy:
       fail-fast: false
       matrix:
         include:
           # See https://github.com/swiftlang/swift-docker/tree/main/
+          #
+          # Note: mlx-c uses std::format, which requires libstdc++ >= 13 (or
+          # libc++ >= 17).  Debian bookworm only ships gcc/libstdc++ 12 (and
+          # gcc-13 is not available in bookworm-backports), so use Ubuntu
+          # noble (24.04, gcc/libstdc++ 13) for the Debian-family build.
           - host: ubuntu-22.04
             arch: x86_64
-            container: swift:bookworm
+            container: swift:noble
           - host: ubuntu-22.04
             arch: x86_64
             container: swift:fedora39
           - host: ubuntu-22.04-arm
             arch: aarch64
-            container: swift:bookworm
+            container: swift:noble
           - host: ubuntu-22.04-arm
             arch: aarch64
             container: swift:fedora39
@@ -204,6 +212,7 @@ jobs:
   linux_build_cmake_cuda:
     name: Linux CUDA CMake Swift Build (cuda-12.9, swift-6.2.3-RELEASE, ubuntu-24.04, x86_64)
     needs: lint
+    if: github.repository == 'ml-explore/mlx-swift'
     runs-on: "gpu-t4-4-core"
     env:
       # Note 12/18/2025: the CI machine does not meet CUDA 13's driver requirement.

@@ -41,6 +41,7 @@ let noMetalCmlxExcludes = [
     "mlx/mlx/backend/metal/compiled.cpp",
     "mlx/mlx/backend/metal/conv.cpp",
     "mlx/mlx/backend/metal/copy.cpp",
+    "mlx/mlx/backend/metal/cross_entropy.cpp",
     "mlx/mlx/backend/metal/custom_kernel.cpp",
     "mlx/mlx/backend/metal/device.cpp",
     "mlx/mlx/backend/metal/device_info.cpp",
@@ -49,6 +50,7 @@ let noMetalCmlxExcludes = [
     "mlx/mlx/backend/metal/event.cpp",
     "mlx/mlx/backend/metal/fence.cpp",
     "mlx/mlx/backend/metal/fft.cpp",
+    "mlx/mlx/backend/metal/gated_delta_update.cpp",
     "mlx/mlx/backend/metal/hadamard.cpp",
     "mlx/mlx/backend/metal/indexing.cpp",
     "mlx/mlx/backend/metal/jit_kernels.cpp",
@@ -66,6 +68,7 @@ let noMetalCmlxExcludes = [
     "mlx/mlx/backend/metal/slicing.cpp",
     "mlx/mlx/backend/metal/softmax.cpp",
     "mlx/mlx/backend/metal/sort.cpp",
+    "mlx/mlx/backend/metal/spec_decode.cpp",
     "mlx/mlx/backend/metal/ternary.cpp",
     "mlx/mlx/backend/metal/unary.cpp",
     "mlx/mlx/backend/metal/utils.cpp",
@@ -81,6 +84,7 @@ let noCudaCmlxExcludes = [
     "mlx/mlx/backend/cuda/conv.cpp",
     "mlx/mlx/backend/cuda/cublas_utils.cpp",
     "mlx/mlx/backend/cuda/cudnn_utils.cpp",
+    "mlx/mlx/backend/cuda/cusolver_utils.cpp",
     "mlx/mlx/backend/cuda/custom_kernel.cpp",
     "mlx/mlx/backend/cuda/delayload.cpp",
     "mlx/mlx/backend/cuda/device_info.cpp",
@@ -97,6 +101,7 @@ let noCudaCmlxExcludes = [
     "mlx/mlx/backend/cuda/scaled_dot_product_attention.cpp",
     "mlx/mlx/backend/cuda/slicing.cpp",
     "mlx/mlx/backend/cuda/utils.cpp",
+    "mlx/mlx/backend/cuda/wddm.cpp",
     "mlx/mlx/backend/cuda/worker.cpp",
     "mlx/mlx/backend/cuda/binary",
     "mlx/mlx/backend/cuda/conv",
@@ -134,6 +139,7 @@ let noCudaCmlxExcludes = [
                 "mlx-c/mlx/c/metal.cpp",
 
                 "mlx/mlx/backend/cuda/delayload.cpp",  // For Windows
+                "mlx/mlx/backend/cuda/wddm.cpp",  // For Windows
 
                 // built by the CudaBuild plugin (nvcc), not by SwiftPM
                 "mlx/mlx/backend/cuda/quantized/qmm",
@@ -155,6 +161,7 @@ let noCudaCmlxExcludes = [
             .linkedLibrary("cudnn"),
             .linkedLibrary("cublas"),
             .linkedLibrary("cublasLt"),
+            .linkedLibrary("cusolver"),
             .linkedLibrary("nvrtc"),
             .linkedLibrary("cudart"),
             .linkedLibrary("cuda"),
@@ -267,7 +274,6 @@ let cmlx = Target.target(
         // mlx files that are not part of the build
         "mlx/ACKNOWLEDGMENTS.md",
         "mlx/CMakeLists.txt",
-        "mlx/CODE_OF_CONDUCT.md",
         "mlx/CONTRIBUTING.md",
         "mlx/LICENSE",
         "mlx/MANIFEST.in",
@@ -281,6 +287,7 @@ let cmlx = Target.target(
         "mlx/python",
         "mlx/setup.py",
         "mlx/tests",
+        "mlx/build",
 
         // build variants (we are opting _out_ of these)
         "mlx/mlx/io/no_safetensors.cpp",
@@ -308,7 +315,7 @@ let cmlx = Target.target(
         .headerSearchPath("mlx-c"),
         .headerSearchPath("json/single_include/nlohmann"),
         .headerSearchPath("fmt/include"),
-        .define("MLX_VERSION", to: "\"0.32.2\""),
+        .define("MLX_VERSION", to: "\"0.32.4\""),
     ],
     linkerSettings: linkerSettings,
     plugins: cudaBuildPlugins,
@@ -346,9 +353,16 @@ let package = Package(
         ),
 
         .target(
+            name: "cLogSupport",
+            path: "Source/cLogSupport",
+            publicHeadersPath: "include"
+        ),
+
+        .target(
             name: "MLX",
             dependencies: [
                 "Cmlx",
+                "cLogSupport",
                 .product(name: "Numerics", package: "swift-numerics"),
             ],
             exclude: mlxSwiftExcludes,

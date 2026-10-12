@@ -23,12 +23,17 @@ KERNEL_LIST=" \
 arg_reduce.metal \
 conv.metal \
 dot.metal \
+gated_delta_update.metal \
+gated_delta_update_vjp.metal \
+gather_mm_offsets.metal \
 layer_norm.metal \
 random.metal \
 rms_norm.metal \
 rope.metal \
 searchsorted.metal \
 scaled_dot_product_attention.metal \
+scaled_dot_product_attention_vjp.metal \
+spec_decode.metal \
 steel/attn/kernels/steel_attention.metal"
 
 # We fixup all the header files AND the listed kernel files
