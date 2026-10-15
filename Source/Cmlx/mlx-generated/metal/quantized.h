@@ -878,9 +878,12 @@ METAL_FUNC void qmv_quad_impl(
     const device T* sl = scales + row * in_vec_size_g * quads_per_simd;
     const device T* bl = biases + row * in_vec_size_g * quads_per_simd;
 
-    U s = sl[0];
-    U b = affine_bias<U, T, bits, false, implied_bias>(s, f, sl[0], bl);
+    // Rows past out_vec_size exist only on a ragged last tile (N % 64 != 0):
+    // read no scale or bias for them (gemma4-qat#302; the store below was
+    // already guarded).
     if (row * quads_per_simd + out_row < out_vec_size) {
+      U s = sl[0];
+      U b = affine_bias<U, T, bits, false, implied_bias>(s, f, sl[0], bl);
       result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
     }
   }
@@ -983,7 +986,9 @@ METAL_FUNC void qmv_fast_impl(
   // Partial last block: lanes starting past the row end read nothing and add 0.
   // The K gate keeps in_vec_size a multiple of values_per_thread.
   if (aligned_end < in_vec_size) {
-    bool in_bounds = (aligned_end + simd_lid * values_per_thread) < in_vec_size;
+    bool in_bounds =
+        (aligned_end + static_cast<int>(simd_lid) * values_per_thread) <
+        in_vec_size;
     if (in_bounds) {
       U sum = load_vector<T, U, values_per_thread, bits>(x, x_thread);
 
