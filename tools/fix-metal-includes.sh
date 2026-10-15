@@ -113,3 +113,24 @@ for src in ${HEADERS} ${KERNELS}; do
 
     done < <(grep -E -o "${PATTERN}" "${dest}")
 done
+
+# third pass: compile the precompiled kernels with safe math.
+# SwiftPM compiles these with Xcode's fast-math default, while MLX's CMake
+# build uses -fno-fast-math; the pragma keeps the two bit-identical.
+# Kernels only (not headers). Idempotent: the first pass recopies a file only
+# when the source is newer, so skip any file that already carries the pragma.
+SAFE_MATH_PRAGMA="#pragma METAL fp math_mode(safe)"
+SAFE_MATH_COMMENT="// SwiftPM compiles this with fast math, MLX's CMake build uses -fno-fast-math; keep them bit-identical."
+for src in ${KERNELS}; do
+
+    relative_path=${src#"$KERNELS_DIR"/}
+    dest=${OUTPUT_DIR}/${relative_path}
+
+    if ! grep -qxF "${SAFE_MATH_PRAGMA}" "${dest}"; then
+        echo "safe math: ${dest}"
+        sed -i '' -e "1i\\
+${SAFE_MATH_COMMENT}\\
+${SAFE_MATH_PRAGMA}
+" "${dest}"
+    fi
+done

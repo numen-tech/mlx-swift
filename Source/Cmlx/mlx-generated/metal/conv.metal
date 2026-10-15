@@ -1,3 +1,5 @@
+// SwiftPM compiles this with fast math, MLX's CMake build uses -fno-fast-math; keep them bit-identical.
+#pragma METAL fp math_mode(safe)
 // Copyright © 2023-2024 Apple Inc.
 
 #include <metal_simdgroup>

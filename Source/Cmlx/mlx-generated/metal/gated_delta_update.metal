@@ -1,3 +1,5 @@
+// SwiftPM compiles this with fast math, MLX's CMake build uses -fno-fast-math; keep them bit-identical.
+#pragma METAL fp math_mode(safe)
 #include "gated_delta_update.h"
 #include "utils.h"
 
