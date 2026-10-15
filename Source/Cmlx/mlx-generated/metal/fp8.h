@@ -58,7 +58,7 @@ struct fp8_e8m0 {
       bits = 0x00;
       return;
     }
-    float le = metal::log2(x);
+    float le = metal::precise::log2(x);
     int n = int(metal::round(le));
 
     n = n < -127 ? -127 : n;

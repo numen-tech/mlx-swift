@@ -549,7 +549,7 @@ template <
     for (short i = 0; i < kRowsPT; ++i) {
       const short r = tm + sm + i * stile_t::kFragRows;
       if (align_Q || !is_last_q || r < params->qL_rem) {
-        lse[r] = M_LN2_F * (max_score[i] + metal::log2(sum_score[i]));
+        lse[r] = M_LN2_F * (max_score[i] + metal::precise::log2(sum_score[i]));
       }
     }
   }

@@ -933,7 +933,7 @@ template <
       if (row < params->qL) {
         LSE[lse_head_off + row] = (sum_score[i] == 0)
             ? -INFINITY
-            : float(M_LN2_F * (max_score[i] + metal::log2(sum_score[i])));
+            : float(M_LN2_F * (max_score[i] + metal::precise::log2(sum_score[i])));
       }
     }
   }
