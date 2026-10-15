@@ -23,7 +23,6 @@ KERNEL_LIST=" \
 arg_reduce.metal \
 conv.metal \
 dot.metal \
-fence.metal \
 gated_delta_update.metal \
 gated_delta_update_vjp.metal \
 gather_mm_offsets.metal \
@@ -114,13 +113,3 @@ for src in ${HEADERS} ${KERNELS}; do
 
     done < <(grep -E -o "${PATTERN}" "${dest}")
 done
-
-# fence.metal needs Metal 3.2 (`coherent(system)`; the core builds it only for
-# MLX_METAL_VERSION >= 320, kernels/CMakeLists.txt) while this package's floor
-# (macOS 14 / iOS 17) is Metal 3.1: guard the body so a 3.1 compile is an empty
-# unit. Idempotent, so regeneration stays byte-identical. (gemma4-qat#301)
-FENCE="${OUTPUT_DIR}/fence.metal"
-if ! head -1 "${FENCE}" | grep -q '__METAL_VERSION__'; then
-    { echo '#if __METAL_VERSION__ >= 320'; cat "${FENCE}"; echo '#endif'; } > "${FENCE}.tmp"
-    mv "${FENCE}.tmp" "${FENCE}"
-fi
