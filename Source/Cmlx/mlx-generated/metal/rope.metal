@@ -1,3 +1,5 @@
+// SwiftPM compiles this with fast math, MLX's CMake build uses -fno-fast-math; keep them bit-identical.
+#pragma METAL fp math_mode(safe)
 // Copyright © 2023-2024 Apple Inc.
 
 #include <metal_math>
@@ -62,7 +64,7 @@ template <typename T>
     uint2 pos [[thread_position_in_grid]],
     uint2 grid [[threads_per_grid]]) {
   float d = static_cast<float>(pos.x) / static_cast<float>(grid.x);
-  float inv_freq = metal::exp2(-d * base);
+  float inv_freq = metal::precise::exp2(-d * base);
   rope_single_impl<T>(in, out, offset, inv_freq, scale, stride, pos, grid);
 }
 
@@ -165,7 +167,7 @@ template <typename T, typename IdxT, int N = 4>
     uint3 pos [[thread_position_in_grid]],
     uint3 grid [[threads_per_grid]]) {
   float d = static_cast<float>(pos.x) / static_cast<float>(grid.x);
-  float inv_freq = metal::exp2(-d * base);
+  float inv_freq = metal::precise::exp2(-d * base);
   rope_impl<T, IdxT, N>(
       in,
       out,

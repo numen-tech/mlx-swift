@@ -1,3 +1,5 @@
+// SwiftPM compiles this with fast math, MLX's CMake build uses -fno-fast-math; keep them bit-identical.
+#pragma METAL fp math_mode(safe)
 // Copyright © 2024-26 Apple Inc.
 
 // clang-format off

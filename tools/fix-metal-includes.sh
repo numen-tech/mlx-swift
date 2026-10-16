@@ -113,3 +113,47 @@ for src in ${HEADERS} ${KERNELS}; do
 
     done < <(grep -E -o "${PATTERN}" "${dest}")
 done
+
+# third pass: compile the precompiled kernels with safe math.
+# SwiftPM compiles these with Xcode's fast-math default, while MLX's CMake
+# build uses -fno-fast-math. The pragma switches the math mode (arithmetic and
+# the intrinsics the kernel body lowers to) to safe, but it is only half of
+# -fno-fast-math: the default-namespace fp32 functions follow
+# -fmetal-math-fp32-functions, which the fourth pass handles.
+# Kernels only (not headers). Idempotent: the first pass recopies a file only
+# when the source is newer, so skip any file that already carries the pragma.
+SAFE_MATH_PRAGMA="#pragma METAL fp math_mode(safe)"
+SAFE_MATH_COMMENT="// SwiftPM compiles this with fast math, MLX's CMake build uses -fno-fast-math; keep them bit-identical."
+for src in ${KERNELS}; do
+
+    relative_path=${src#"$KERNELS_DIR"/}
+    dest=${OUTPUT_DIR}/${relative_path}
+
+    if ! grep -qxF "${SAFE_MATH_PRAGMA}" "${dest}"; then
+        echo "safe math: ${dest}"
+        sed -i '' -e "1i\\
+${SAFE_MATH_COMMENT}\\
+${SAFE_MATH_PRAGMA}
+" "${dest}"
+    fi
+done
+
+# fourth pass: spell the default-namespace fp32 transcendentals precise.
+# SwiftPM also passes -fmetal-math-fp32-functions=fast, which sets
+# __METAL_MATH_FP32_FUNCTIONS_FAST__ so metal::exp2/log2 lower to
+# air.fast_exp2/air.fast_log2; a pragma can't override that, and MLX's CMake
+# build (-fno-fast-math) gets the precise functions. Spell the calls precise
+# instead. Applies to the generated copies of the kernels and the headers.
+# Every site takes a float (metal::precise::exp2/log2 promote half to float,
+# which would change meaning). Idempotent: the rewritten text doesn't match.
+# tools/check-metal-math.sh verifies the result at the IR level.
+for src in ${HEADERS} ${KERNELS}; do
+
+    relative_path=${src#"$KERNELS_DIR"/}
+    dest=${OUTPUT_DIR}/${relative_path}
+
+    if grep -qE 'metal::(exp2|log2)\(' "${dest}"; then
+        echo "precise fp32 functions: ${dest}"
+        sed -i '' -E -e 's/metal::(exp2|log2)\(/metal::precise::\1(/g' "${dest}"
+    fi
+done
