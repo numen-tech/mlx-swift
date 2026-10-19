@@ -6,7 +6,8 @@ import Foundation
 // Note: this is all immutable state -- the `id` property is only set at init time
 final class CompiledFunction: @unchecked (Sendable) {
 
-    /// unique (for the lifetime of the object) identifier for the compiled function
+    /// identifier for the compiled function: the object's own address, unique only
+    /// for the lifetime of the object, so `deinit` must erase it from every cache
     private var id: UInt!
 
     /// guards the observed state (``inputs`` / ``outputs``) -- see #226
@@ -42,20 +43,25 @@ final class CompiledFunction: @unchecked (Sendable) {
     ///
     /// ### Why this takes `evalLock`
     ///
-    /// `mlx_detail_compile_erase` is `compiler_cache().erase(fun_id)`, i.e.
-    /// `std::unordered_map::erase` on the *same* process-global
-    /// `mlx::core::detail::CompilerCache` that ``innerCall(_:)`` reads and
-    /// inserts into via `CompilerCache::find` (`cache_[fun_id]`, which itself
-    /// can insert and rehash, followed by `entries.push_back`).  That cache has
-    /// no synchronization of its own, and `find` hands back a *reference* to an
-    /// entry that the caller then fills in and reads from across the whole
-    /// trace.  An unlocked erase can therefore rehash the map out from under a
-    /// concurrent `find`, or destroy the very entry another thread is compiling
-    /// into.
+    /// The compile cache is **per thread**: `mlx::core::detail::compile_cache_unsafe()`
+    /// is a `thread_local` `CompileCache`, and a call to a compiled function
+    /// builds its entry in the cache of the thread that made the call.  ``id``
+    /// is this object's own address, so every thread that ever called this
+    /// function holds an entry under that id in its own cache.
     ///
-    /// Every other use of that cache happens under `evalLock`, so the erase has
-    /// to as well; otherwise the lock does not actually make the cache
-    /// single-threaded, it only makes most of it single-threaded.
+    /// `mlx_detail_compile_erase` takes a cache handle, but the core erases the
+    /// id from **every** live thread's cache, not only the handle's.  That is
+    /// what this relies on: erasing from the deallocating thread's cache alone
+    /// would leave the entries of the other threads behind, and a new
+    /// ``CompiledFunction`` allocated at the same address (so with the same
+    /// ``id``) would get a cache hit on those threads and replay the freed
+    /// function's graph, with its old captured constants (gemma4-qat#355).  The
+    /// core cache has its own lock, so the erase cannot corrupt a cache that
+    /// another thread is compiling into.
+    ///
+    /// The erase still happens under `evalLock`, like every other use of the
+    /// compiler cache in this file, so a compile or a call never interleaves
+    /// with it.
     ///
     /// ### Why blocking here is safe
     ///
@@ -112,10 +118,10 @@ final class CompiledFunction: @unchecked (Sendable) {
     /// `evalLock` is acquired **outermost**, before the per-instance ``lock``.
     /// That order is not a preference, it is forced:
     ///
-    /// - Tracing mutates process-global state that has no synchronization of its
-    ///   own -- `mlx::core::detail::CompilerCache` is an unguarded singleton and
-    ///   `detail::InTracing::trace_stack()` is a plain function-local `static`,
-    ///   not `thread_local` -- so `evalLock` has to span the whole trace (#339).
+    /// - `evalLock` has to span the whole trace (#339).  Since mlx 0.32 the
+    ///   compile cache and `detail::InTracing::trace_stack()` are `thread_local`,
+    ///   so the lock no longer protects a shared cache; it keeps one thread's
+    ///   trace from interleaving with another thread's compile or erase.
     /// - The trace calls back into Swift, and the traced body routinely calls
     ///   *other* compiled functions: every `MLXNN` activation is a file-scope
     ///   `CompiledFunction`, so e.g. `silu` inside a traced body enters
@@ -143,8 +149,8 @@ final class CompiledFunction: @unchecked (Sendable) {
             // `_updateInternal` swaps in `innerCall` are the sole mutation of
             // anything reachable from `self` -- every other stored property is
             // `let`, and `id` is written once at init.  With no state there is
-            // nothing to guard, and `evalLock` above already serializes the
-            // compiler cache and every other caller.
+            // nothing to guard, and `evalLock` above already serializes
+            // every other caller.
             //
             // This is the common case: every compiled function in `MLXNN` is
             // stateless.
