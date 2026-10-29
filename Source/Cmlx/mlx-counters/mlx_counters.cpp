@@ -1,5 +1,6 @@
 #include "mlx_counters.h"
 
+#include "mlx/backend/metal/gpu_family.h"
 #include "mlx/backend/metal/metal.h"
 
 extern "C" void mlx_counters_snapshot(
@@ -24,4 +25,8 @@ extern "C" void mlx_counters_snapshot(
 
 extern "C" void mlx_counters_reset(void) {
   mlx::core::metal::reset();
+}
+
+extern "C" int mlx_apple6_route_version(void) {
+  return mlx::core::metal::kApple6RouteVersion;
 }

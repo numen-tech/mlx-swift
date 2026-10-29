@@ -40,6 +40,14 @@ void mlx_counters_snapshot(
 /** Zero all four counters (only while no eval is in flight). */
 void mlx_counters_reset(void);
 
+/**
+ * The version of the Apple6 (A13) MMA-free route the vendored numen-tech/mlx
+ * core carries (`mlx::core::metal::kApple6RouteVersion`, gpu_family.h), 0 if
+ * it carries none. Constant per build; a package that opens an A13 allowlist
+ * must require >= 1 (numen-tech/gemma4-qat#703). Not part of mlx-c.
+ */
+int mlx_apple6_route_version(void);
+
 #ifdef __cplusplus
 }
 #endif
