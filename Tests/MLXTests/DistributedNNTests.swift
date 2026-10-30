@@ -371,7 +371,7 @@ func shardingEdgeCasesBody(world: MLXDistributed.Group) throws {
     // Explicit boundaries are checked the same way: out of order, out of range,
     // repeated (an empty segment) or non-finite would reach split(indices:) or
     // trap converting NaN to Int.
-    let dimension = 8 * world.size
+    let dimension = try 8 * world.size
     let invalid: [Segments] = [
         .indices([5, 3]), .indices([0]), .indices([dimension]), .indices([-1]),
         .indices([3, 3]), .fractions([0.75, 0.25]), .fractions([1.5]), .fractions([0]),
