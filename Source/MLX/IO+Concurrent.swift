@@ -188,16 +188,24 @@ public func loadArraysAndMetadata(urls: [URL], stream: StreamOrDevice = .cpu) th
 ) {
     // Only header parsing happens on Dispatch worker threads. Payload reads stay lazy
     // until checkedEval below, where MLX owns their concurrency.
+    //
+    // The scoped progress handlers are task-local and concurrentPerform does not carry
+    // task-local bindings onto its worker threads, so capture them here and rebind them
+    // around each file. Without this only the shards the calling thread happens to run
+    // report progress.
+    let progressHandlers = LoadProgressHandler.handlers
     let preparation = ConcurrentLoadPreparation(fileCount: urls.count)
     DispatchQueue.concurrentPerform(iterations: urls.count) { file in
-        let url = urls[file]
-        let names = try? safetensorNamesInFileOrder(url: url)
-        do {
-            let (arrays, metadata) = try loadArraysAndMetadata(url: url, stream: stream)
-            preparation.set(
-                file: file, arrays: arrays, metadata: metadata, names: names)
-        } catch {
-            preparation.record(error: error)
+        LoadProgressHandler.$handlers.withValue(progressHandlers) {
+            let url = urls[file]
+            let names = try? safetensorNamesInFileOrder(url: url)
+            do {
+                let (arrays, metadata) = try loadArraysAndMetadata(url: url, stream: stream)
+                preparation.set(
+                    file: file, arrays: arrays, metadata: metadata, names: names)
+            } catch {
+                preparation.record(error: error)
+            }
         }
     }
 

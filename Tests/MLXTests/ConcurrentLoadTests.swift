@@ -263,4 +263,42 @@ final class ConcurrentLoadTests: XCTestCase {
             XCTAssertEqual(roots.map { $0.item(Int32.self) }.sorted(), [1, 2])
         }
     }
+
+    /// `LoadProgressHandler` is task-local and `DispatchQueue.concurrentPerform` does not
+    /// propagate task-local bindings, so every shard prepared off the calling thread used
+    /// to lose the scoped handler. With enough files to spill onto worker threads, each
+    /// file must still report its progress, ending at its own full size.
+    func testScopedProgressHandlerReachesEveryShardOfConcurrentLoad() throws {
+        let fileCount = 32
+        var urls = [URL]()
+        for file in 0 ..< fileCount {
+            // Distinct payload sizes make each file's total unit count unique.
+            let count = 256 + file * 64
+            urls.append(
+                try write(
+                    arrays: ["file\(file)": MLXArray(Int32(0) ..< Int32(count))],
+                    name: "progress\(file).safetensors"))
+        }
+        let sizes = try urls.map {
+            Int64(try XCTUnwrap(FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? Int))
+        }
+        XCTAssertEqual(Set(sizes).count, fileCount)
+
+        let lock = NSLock()
+        nonisolated(unsafe) var reports = [LoadProgress]()
+        let loaded = try withLoadProgressHandler({ @Sendable progress in
+            lock.withLock { reports.append(progress) }
+        }) {
+            try loadArrays(urls: urls)
+        }
+        XCTAssertEqual(loaded.count, fileCount)
+
+        let seen = lock.withLock { reports }
+        for (file, size) in sizes.enumerated() {
+            let forFile = seen.filter { $0.totalUnitCount == size }
+            XCTAssertFalse(forFile.isEmpty, "no progress reported for shard \(file)")
+            XCTAssertEqual(
+                forFile.last?.completedUnitCount, size, "shard \(file) did not finish reporting")
+        }
+    }
 }
