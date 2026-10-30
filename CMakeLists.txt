@@ -37,22 +37,10 @@ endif()
 set(apply_patch ${CMAKE_COMMAND} -DREPO=<SOURCE_DIR>)
 set(apply_patch_script -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply-patch.cmake)
 
-# two local patches for CUDA:
-#
-# * https://github.com/ml-explore/mlx/pull/4480: leak the global command encoder
-#   map rather than synchronizing on process shutdown
-# * make ~CudaHandle non-throwing: cu::Worker is detached and holds the last
-#   reference to itself, so ~Worker -> ~CudaEvent -> cudaEventDestroy runs on
-#   the worker thread at an arbitrary point during exit, racing the CUDA
-#   runtime's own teardown. A failing destroy there terminated the process.
-set(mlx_patch
-    ${apply_patch} -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/mlx.patch
-    ${apply_patch_script})
-
 # note: this must be declared (and named `mlx`) before mlx-c is made available
-# so that our pinned/patched version wins over the one mlx-c declares. Because
-# we now pull mlx in first, we are also responsible for the option defaults that
-# mlx-c would normally set for us.
+# so that our pinned version wins over the one mlx-c declares. Because we now
+# pull mlx in first, we are also responsible for the option defaults that mlx-c
+# would normally set for us.
 set(MLX_BUILD_TESTS OFF)
 set(MLX_BUILD_EXAMPLES OFF)
 set(MLX_BUILD_BENCHMARKS OFF)
@@ -61,8 +49,7 @@ set(MLX_BUILD_PYTHON_BINDINGS OFF)
 FetchContent_Declare(
   mlx
   GIT_REPOSITORY "https://github.com/ml-explore/mlx.git"
-  GIT_TAG "v0.32.2"
-  PATCH_COMMAND ${mlx_patch})
+  GIT_TAG "v0.32.4")
 FetchContent_MakeAvailable(mlx)
 
 # mlx-c
@@ -70,7 +57,7 @@ set(MLX_C_BUILD_EXAMPLES OFF)
 FetchContent_Declare(
   mlx-c
   GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
-  GIT_TAG "ebc88f10caa1b625e6b581437a8dea6df8a70085")
+  GIT_TAG "v0.8.0")
 FetchContent_MakeAvailable(mlx-c)
 
 # swift-numerics
@@ -100,20 +87,6 @@ if(MLX_BUILD_CUDA)
   )
 endif()
 
-# cLogSupport package small C shim that exposes os_log_type_enabled() to Swift
-# (see #491)
-set(cLogSupport_include ${CMAKE_CURRENT_LIST_DIR}/Source/cLogSupport/include)
-set(cLogSupport_module_dir ${CMAKE_CURRENT_BINARY_DIR}/cLogSupport-module)
-file(
-  WRITE ${cLogSupport_module_dir}/module.modulemap
-  "module cLogSupport {\n    header \"${cLogSupport_include}/cLogSupport.h\"\n    export *\n}\n"
-)
-
-add_library(cLogSupport STATIC
-            ${CMAKE_CURRENT_LIST_DIR}/Source/cLogSupport/cLogSupport.c)
-target_include_directories(cLogSupport PUBLIC ${cLogSupport_include}
-                                              ${cLogSupport_module_dir})
-
 file(GLOB MLX-src ${CMAKE_CURRENT_LIST_DIR}/Source/MLX/*.swift)
 
 if(NOT MLX_BUILD_METAL)
@@ -129,7 +102,7 @@ add_library(MLX STATIC ${MLX-src})
 target_include_directories(MLX
                            PUBLIC ${CMAKE_CURRENT_LIST_DIR}/Source/Cmlx/include)
 # Note: mlxc is target name exported by mlx-c
-target_link_libraries(MLX PUBLIC mlxc Numerics cLogSupport)
+target_link_libraries(MLX PUBLIC mlxc Numerics)
 target_compile_options(MLX PRIVATE -package-name MLX)
 
 # MLXRandom package

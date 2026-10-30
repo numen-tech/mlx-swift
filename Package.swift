@@ -33,6 +33,23 @@ import PackageDescription
     let cudaTargets: [Target] = []
 #endif
 
+/// Additional include roots for the CUDA build, colon-separated.
+///
+/// The CMake build fetches cudnn-frontend and CUTLASS itself, but SwiftPM has no
+/// equivalent, so `cudnn_utils.cpp` and the `quantized/qmm` kernels cannot find
+/// their headers unless the roots are supplied here.
+let extraCudaIncludePaths =
+    (Context.environment["MLX_CUDA_INCLUDE_PATHS"] ?? "")
+    .split(separator: ":")
+    .map(String.init)
+    .filter { !$0.isEmpty }
+
+/// CCCL headers used to compile device code and to JIT at runtime.
+///
+/// Defaults to the copy shipped with the CUDA toolkit. MLX pins its own CCCL
+/// version, so allow pointing at that copy instead when the two differ.
+let cudaCcclDir = Context.environment["MLX_CCCL_DIR"] ?? "/usr/local/cuda/include/cccl"
+
 let noMetalCmlxExcludes = [
     // Exclude Metal backend files, but keep no_metal.cpp for stubs
     // "mlx/mlx/backend/metal/no_metal.cpp",
@@ -145,11 +162,12 @@ let noCudaCmlxExcludes = [
                 "mlx/mlx/backend/cuda/quantized/qmm",
             ] + noMetalCmlxExcludes
 
-        cxxSettings = [
-            .unsafeFlags(["-I/usr/local/cuda/include"]),
-            .unsafeFlags(["-I/usr/local/cuda/include/cccl"]),
-            .define("MLX_CCCL_DIR", to: "\"/usr/local/cuda/include/cccl\""),
-        ]
+        cxxSettings =
+            [
+                .unsafeFlags(["-I/usr/local/cuda/include"]),
+                .unsafeFlags(["-I\(cudaCcclDir)"]),
+                .define("MLX_CCCL_DIR", to: "\"\(cudaCcclDir)\""),
+            ] + extraCudaIncludePaths.map { .unsafeFlags(["-I\($0)"]) }
 
         linkerSettings = [
             .linkedLibrary("gfortran", .when(platforms: [.linux])),
@@ -158,6 +176,7 @@ let noCudaCmlxExcludes = [
             .linkedLibrary("openblas", .when(platforms: [.linux])),
             .unsafeFlags(["-L/usr/local/cuda/lib64"]),
             .unsafeFlags(["-L/usr/local/cuda/lib64/stubs"]),
+            .linkedLibrary("cusolver"),
             .linkedLibrary("cudnn"),
             .linkedLibrary("cublas"),
             .linkedLibrary("cublasLt"),
@@ -216,6 +235,7 @@ let noCudaCmlxExcludes = [
             // the wrappers there so they must not also be built directly
             "mlx/mlx/backend/cpu/compiled.cpp",
             "mlx/mlx/backend/cpu/jit_compiler.cpp",
+            "mlx/mlx/distributed/jaccl/no_jaccl.cpp",
 
             // opt-out of these backends (using metal)
             "mlx/mlx/backend/no_gpu",
@@ -229,6 +249,7 @@ let noCudaCmlxExcludes = [
 
     let cxxSettings: [CXXSetting] = [
         .headerSearchPath("metal-cpp"),
+        .headerSearchPath("mlx/mlx/distributed/jaccl/lib"),
 
         .define("MLX_USE_ACCELERATE"),
         .define("ACCELERATE_NEW_LAPACK"),
@@ -298,7 +319,8 @@ let cmlx = Target.target(
         "mlx/mlx/backend/metal/kernels",
         "mlx/mlx/backend/metal/nojit_kernels.cpp",
 
-        // distributed backends: enable ring, disable MPI + NCCL + JACCL
+        // distributed backends: enable ring, disable MPI + NCCL.  JACCL is
+        // built through mlx-conditional on macOS, so its sources are excluded here.
         "mlx/mlx/distributed/mpi/mpi.cpp",
         "mlx/mlx/distributed/ring/no_ring.cpp",
         "mlx/mlx/distributed/nccl/nccl.cpp",
@@ -316,6 +338,7 @@ let cmlx = Target.target(
         .headerSearchPath("json/single_include/nlohmann"),
         .headerSearchPath("fmt/include"),
         .define("MLX_VERSION", to: "\"0.32.4\""),
+        .disableWarning("shorten-64-to-32"),
     ],
     linkerSettings: linkerSettings,
     plugins: cudaBuildPlugins,
@@ -353,16 +376,9 @@ let package = Package(
         ),
 
         .target(
-            name: "cLogSupport",
-            path: "Source/cLogSupport",
-            publicHeadersPath: "include"
-        ),
-
-        .target(
             name: "MLX",
             dependencies: [
                 "Cmlx",
-                "cLogSupport",
                 .product(name: "Numerics", package: "swift-numerics"),
             ],
             exclude: mlxSwiftExcludes,
