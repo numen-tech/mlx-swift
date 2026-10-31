@@ -218,23 +218,23 @@ extension MLXLogger {
 
 #if canImport(OSLog)
     import OSLog
-    import cLogSupport
 
     /// On systems that support it, a log handler that is backed by OSLog.
     public struct OSLogHandler: MLXLogHandler {
 
+        // Logger.isEnabled(type:) is absent on iOS 26.2.
+        // This handle checks the level before message evaluation.
+        private let _osLog: OSLog
         private let logger: os.Logger
-
-        // see #491
-        private let osLog: OSLog
 
         public static func install() {
             MLXLogger.factory = { OSLogHandler(label: $0) }
         }
 
         public init(label: String) {
-            self.logger = Logger(subsystem: "mlx-swift", category: label)
-            self.osLog = OSLog(subsystem: "mlx-swift", category: label)
+            let osLog = OSLog(subsystem: "mlx-swift", category: label)
+            self._osLog = osLog
+            self.logger = Logger(osLog)
         }
 
         public func log(
@@ -243,7 +243,7 @@ extension MLXLogger {
             file: StaticString, function: StaticString, line: UInt
         ) {
             let level = Self.osLogType(for: level)
-            if is_os_log_enabled(osLog, level) {
+            if _osLog.isEnabled(type: level) {
                 let message = message() + metadataSuffix(metadata())
                 logger.log(level: level, "\(message, privacy: .public)")
             }

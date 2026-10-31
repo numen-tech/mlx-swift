@@ -16,10 +16,12 @@ import XCTest
 ///
 /// - Parameter world: the group to shard across
 func shardLinearBody(world: MLXDistributed.Group) throws {
+    let rank = try world.rank
+    let size = try world.size
     MLXRandom.seed(0xF0F0_F0F0)
 
-    let lower = world.rank * 1024 / world.size
-    let upper = (world.rank + 1) * 1024 / world.size
+    let lower = rank * 1024 / size
+    let upper = (rank + 1) * 1024 / size
 
     let x = MLXRandom.normal([4, 1024])
     let linear = Linear(1024, 1024, bias: true)
@@ -109,6 +111,8 @@ func shardLinearBody(world: MLXDistributed.Group) throws {
 /// The gradients of a sharded model must match the slice of the unsharded
 /// model's gradients that this rank owns.
 private func shardLinearBackward(world: MLXDistributed.Group) throws {
+    let rank = try world.rank
+    let size = try world.size
     MLXRandom.seed(0xF0F0_F0F0)
 
     let layers = (0 ..< 4).map { _ in Linear(128, 128) }
@@ -130,8 +134,8 @@ private func shardLinearBackward(world: MLXDistributed.Group) throws {
     let (l2, g2) = valueAndGrad(model: sharded, loss)(sharded, x, y)
     try checkedEval(l1, g1, l2, g2)
 
-    let lower = world.rank * 128 / world.size
-    let upper = (world.rank + 1) * 128 / world.size
+    let lower = rank * 128 / size
+    let upper = (rank + 1) * 128 / size
     let full = Dictionary(uniqueKeysWithValues: g1.flattened())
     let shard = Dictionary(uniqueKeysWithValues: g2.flattened())
 
@@ -293,6 +297,7 @@ func donationBody(world: MLXDistributed.Group) throws {
 /// the sharded layers have to come out with the shapes the layer they were
 /// built from would have, divided along the sharded axis.
 func quantizedShardedConstructionBody(world: MLXDistributed.Group) throws {
+    let size = try world.size
     for bits in [2, 3, 4, 5, 6, 8] {
         let quantized = QuantizedLinear(Linear(1536, 1024), groupSize: 64, bits: bits)
         let allToSharded = try QuantizedAllToShardedLinear(quantized, group: world)
@@ -300,12 +305,12 @@ func quantizedShardedConstructionBody(world: MLXDistributed.Group) throws {
 
         // rows are outputs, columns are the packed inputs
         XCTAssertEqual(
-            allToSharded.weight.dim(0), quantized.weight.dim(0) / world.size, "bits \(bits)")
+            allToSharded.weight.dim(0), quantized.weight.dim(0) / size, "bits \(bits)")
         XCTAssertEqual(allToSharded.weight.dim(1), quantized.weight.dim(1), "bits \(bits)")
 
         XCTAssertEqual(shardedToAll.weight.dim(0), quantized.weight.dim(0), "bits \(bits)")
         XCTAssertEqual(
-            shardedToAll.weight.dim(1), quantized.weight.dim(1) / world.size, "bits \(bits)")
+            shardedToAll.weight.dim(1), quantized.weight.dim(1) / size, "bits \(bits)")
 
         // and the scales have to cover exactly the inputs the weight holds
         for layer in [allToSharded, shardedToAll] {
@@ -318,18 +323,20 @@ func quantizedShardedConstructionBody(world: MLXDistributed.Group) throws {
 
 /// Cases the Python tests do not cover, each one a bug this port had.
 func shardingEdgeCasesBody(world: MLXDistributed.Group) throws {
+    let rank = try world.rank
+    let size = try world.size
     // A sharded-to-all layer adds its bias after the reduction, so every
     // process has to hold the same bias.  Seed the processes differently:
     // nothing keeps their generators in step -- they may have done different
     // work before this -- and the bias must not depend on that.
-    MLXRandom.seed(UInt64(world.rank + 1))
-    let layer = try ShardedToAllLinear(8 * world.size, 4, group: world)
+    MLXRandom.seed(UInt64(rank + 1))
+    let layer = try ShardedToAllLinear(8 * size, 4, group: world)
     let bias = try XCTUnwrap(layer.bias)
     let gathered = MLXDistributed.allGather(bias, group: world)
     try checkedEval(gathered)
 
     let width = bias.dim(0)
-    for rank in 1 ..< world.size {
+    for rank in 1 ..< size {
         XCTAssertTrue(
             gathered[0 ..< width].allClose(gathered[rank * width ..< (rank + 1) * width])
                 .item(Bool.self),
@@ -338,15 +345,15 @@ func shardingEdgeCasesBody(world: MLXDistributed.Group) throws {
 
     // A dimension can divide by the group size while one of its segments does
     // not.  That has to be reported rather than trap inside split(parts:).
-    if world.size > 1 {
+    if size > 1 {
         XCTAssertThrowsError(
             try shardLinear(
-                Linear(8 * world.size, 8), sharding: .shardedToAll,
+                Linear(8 * size, 8), sharding: .shardedToAll,
                 segments: .indices([3]), group: world)
         ) { error in
             XCTAssertEqual(
                 error as? ShardingError,
-                .indivisible(dimension: "segment of weight", of: 3, across: world.size))
+                .indivisible(dimension: "segment of weight", of: 3, across: size))
         }
     }
 
@@ -354,17 +361,17 @@ func shardingEdgeCasesBody(world: MLXDistributed.Group) throws {
     // group of one as well.  split(parts:) would call fatalError.
     XCTAssertThrowsError(
         try shardLinear(
-            Linear(8 * world.size, 8), sharding: .shardedToAll, segments: .count(3),
+            Linear(8 * size, 8), sharding: .shardedToAll, segments: .count(3),
             group: world)
     ) { error in
         XCTAssertEqual(
-            error as? ShardingError, .invalidSegments(.count(3), dimension: 8 * world.size))
+            error as? ShardingError, .invalidSegments(.count(3), dimension: 8 * size))
     }
 
     // Explicit boundaries are checked the same way: out of order, out of range,
     // repeated (an empty segment) or non-finite would reach split(indices:) or
     // trap converting NaN to Int.
-    let dimension = 8 * world.size
+    let dimension = try 8 * world.size
     let invalid: [Segments] = [
         .indices([5, 3]), .indices([0]), .indices([dimension]), .indices([-1]),
         .indices([3, 3]), .fractions([0.75, 0.25]), .fractions([1.5]), .fractions([0]),
@@ -459,7 +466,6 @@ func shardingEdgeCasesBody(world: MLXDistributed.Group) throws {
         wide, segments: .indices([boundary]), group: world)
 
     // this rank's part of each segment
-    let (rank, size) = (world.rank, world.size)
     let first = (rank * boundary / size) ..< ((rank + 1) * boundary / size)
     let second =
         (boundary + rank * (inputs - boundary) / size)
@@ -480,7 +486,7 @@ func shardingEdgeCasesBody(world: MLXDistributed.Group) throws {
     ) { error in
         XCTAssertEqual(
             error as? ShardingError,
-            .quantizationGroup(inputDimensions: 272, groupSize: 64, across: world.size))
+            .quantizationGroup(inputDimensions: 272, groupSize: 64, across: size))
     }
 }
 
@@ -491,17 +497,19 @@ func shardingEdgeCasesBody(world: MLXDistributed.Group) throws {
 /// instead.  Every batching has to produce the same average, and the average
 /// has to include every rank.
 func averageGradientsBody(world: MLXDistributed.Group) throws {
+    let rank = try world.rank
+    let size = try world.size
     // Ten gradients of ten float32 values, 40 bytes each as in Python, so the
     // limits below form different batches.  Each rank contributes its own
     // rank + 1, so the average is (size + 1) / 2 times the gradient's own
     // factor.  The values differ per gradient and half are matrices on
     // purpose: batching concatenates them, reduces once and splits the result
     // again, and identical or flat arrays would hide a bad split.
-    let mean = Float(world.size + 1) / 2
+    let mean = Float(size + 1) / 2
     let shapes = (0 ..< 10).map { $0.isMultiple(of: 2) ? [10] : [2, 5] }
     let gradients = ModuleParameters.unflattened(
         (0 ..< 10).map {
-            ("g\($0)", MLXArray.ones(shapes[$0]) * Float(($0 + 1) * (world.rank + 1)))
+            ("g\($0)", MLXArray.ones(shapes[$0]) * Float(($0 + 1) * (rank + 1)))
         })
     let expected = Dictionary(
         uniqueKeysWithValues: (0 ..< 10).map {
@@ -535,8 +543,8 @@ func averageGradientsBody(world: MLXDistributed.Group) throws {
     // one reduction per array and keep their dtype
     let mixed = try averageGradients(
         ModuleParameters.unflattened([
-            ("wide", MLXArray.ones([4]) * Float(world.rank + 1)),
-            ("narrow", (MLXArray.ones([4]) * Float(world.rank + 1)).asType(.float16)),
+            ("wide", MLXArray.ones([4]) * Float(rank + 1)),
+            ("narrow", (MLXArray.ones([4]) * Float(rank + 1)).asType(.float16)),
         ]), group: world)
     // evaluate in the flattened order, which is sorted by key: a Dictionary
     // iterates in a per process order, and evaluating the collectives in
@@ -550,13 +558,14 @@ func averageGradientsBody(world: MLXDistributed.Group) throws {
         let averaged = try XCTUnwrap(flatMixed[key])
         XCTAssertTrue(
             averaged.asType(.float32)
-                .allClose(MLXArray.ones([4]) * (Float(world.size + 1) / 2), rtol: 1e-2)
+                .allClose(MLXArray.ones([4]) * (Float(size + 1) / 2), rtol: 1e-2)
                 .item(Bool.self), key)
     }
 }
 
 /// Port of `test_clip_grad_norm_sharded`.
 func clipGradNormShardedBody(world: MLXDistributed.Group) throws {
+    let size = try world.size
     let value: Float = 3
     let gradients = ModuleParameters.unflattened([
         ("a", MLXArray.ones([4, 3]) * value),
@@ -566,7 +575,7 @@ func clipGradNormShardedBody(world: MLXDistributed.Group) throws {
     // every rank holds the same number of elements, so the global norm counts
     // all of them
     let localCount = 4 * 3 + 5
-    let expectedNorm = (Float(world.size * localCount)).squareRoot() * value
+    let expectedNorm = (Float(size * localCount)).squareRoot() * value
 
     // a limit far above the norm leaves the shard alone
     let (unclipped, norm) = try clipGradNormSharded(
@@ -658,6 +667,37 @@ private func assertGradientWhole(
         "\(key) gradient mismatch", file: file, line: line)
 }
 
+/// `shardInPlace` with integer segments on a module that holds a quantized
+/// layer.  The positions count input features, which the packed weight and the
+/// scales hold at different resolutions, so each has to split at its own index.
+func quantizedShardInPlaceBody(world: MLXDistributed.Group) throws {
+    let rank = try world.rank
+    let size = try world.size
+    MLXRandom.seed(0)
+    let x = MLXRandom.normal([4, 1024])
+    let model = Sequential(layers: QuantizedLinear(Linear(1024, 32, bias: false)))
+    let expected = model(x)
+
+    try shardInPlace(model, sharding: .shardedToAll, segments: .indices([512]), group: world)
+
+    // each process holds its slice of both segments; the sum of the partial
+    // results is the unsharded result
+    let step = 512 / size
+    let lower = rank * step
+    let xPart = concatenated(
+        [x[0..., lower ..< lower + step], x[0..., 512 + lower ..< 512 + lower + step]], axis: 1)
+    let result = MLXDistributed.allSum(model(xPart), group: world)
+    XCTAssertTrue(
+        expected.allClose(result, rtol: 1e-4, atol: 1e-6).item(Bool.self),
+        "integer segments landed in the wrong place")
+
+    // a segment has to hold whole quantization groups on every process
+    XCTAssertThrowsError(
+        try shardInPlace(
+            QuantizedLinear(Linear(1024, 32)), sharding: .shardedToAll,
+            segments: .indices([528]), group: world))
+}
+
 /// The single process half: sharding is the identity in a group of size one,
 /// but the layers are still built and run.
 ///
@@ -699,6 +739,10 @@ class DistributedNNTests: XCTestCase {
     func testClipGradNormSharded() throws {
         try clipGradNormShardedBody(world: try MLXDistributed.initialize())
     }
+
+    func testQuantizedShardInPlace() throws {
+        try quantizedShardInPlaceBody(world: try MLXDistributed.initialize())
+    }
 }
 
 /// The multi process half, where every rank holds a different slice.
@@ -728,6 +772,7 @@ class DistributedNNRingTests: XCTestCase {
             try moduleSubstitutionBody(world: group)
             try donationBody(world: group)
             try quantizedShardedConstructionBody(world: group)
+            try quantizedShardInPlaceBody(world: group)
             try shardingEdgeCasesBody(world: group)
             try averageGradientsBody(world: group)
             try clipGradNormShardedBody(world: group)
