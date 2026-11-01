@@ -25,12 +25,34 @@
     public enum GPUFamilyRoute {
         /// The route version the core carries; 0 when it carries none.
         public static var apple6MMAFreeVersion: Int { Int(mlx_apple6_route_version()) }
+
+        /// The version of the NAX kill switch the core carries
+        /// (`mlx::core::metal::kNaxDisableEnvVersion`); 0 when it carries none.
+        ///
+        /// - 1: ``naxDisableEnvironmentKey`` set to `1` before the first GPU op turns every NAX
+        ///   (GPU generation 18 and later) route off, so matmul, quantized matmul, attention and
+        ///   gated delta take the kernels earlier generations take (numen-tech/gemma4-qat#1085).
+        ///
+        /// Constant for a build.
+        public static var naxDisableEnvVersion: Int { Int(mlx_nax_disable_env_version()) }
+
+        /// Whether this process takes the NAX kernels (`mlx::core::metal::is_nax_available()`).
+        /// The first read (or the first GPU op that asks) fixes the answer for the process, since
+        /// the core reads ``naxDisableEnvironmentKey`` then: set the variable before it.
+        public static var isNAXAvailable: Bool { mlx_nax_available() != 0 }
     }
 
 #else
 
     public enum GPUFamilyRoute {
         public static var apple6MMAFreeVersion: Int { 0 }
+        public static var naxDisableEnvVersion: Int { 0 }
+        public static var isNAXAvailable: Bool { false }
     }
 
 #endif
+
+extension GPUFamilyRoute {
+    /// The environment variable the core's NAX kill switch reads (``naxDisableEnvVersion`` >= 1).
+    public static let naxDisableEnvironmentKey = "MLX_DISABLE_NAX"
+}

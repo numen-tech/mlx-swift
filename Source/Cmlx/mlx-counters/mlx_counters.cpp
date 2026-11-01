@@ -1,5 +1,6 @@
 #include "mlx_counters.h"
 
+#include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/gpu_family.h"
 #include "mlx/backend/metal/metal.h"
 
@@ -29,4 +30,12 @@ extern "C" void mlx_counters_reset(void) {
 
 extern "C" int mlx_apple6_route_version(void) {
   return mlx::core::metal::kApple6RouteVersion;
+}
+
+extern "C" int mlx_nax_disable_env_version(void) {
+  return mlx::core::metal::kNaxDisableEnvVersion;
+}
+
+extern "C" int mlx_nax_available(void) {
+  return mlx::core::metal::is_nax_available() ? 1 : 0;
 }

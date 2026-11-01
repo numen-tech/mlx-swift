@@ -19,6 +19,23 @@
         func testVendoredCoreCarriesTheApple6RouteVersion2() {
             XCTAssertGreaterThanOrEqual(GPUFamilyRoute.apple6MMAFreeVersion, 2)
         }
+
+        /// The vendored core carries the NAX kill switch (numen-tech/gemma4-qat#1085), so a
+        /// package that sets `MLX_DISABLE_NAX` for an unverified GPU generation gets the effect.
+        func testVendoredCoreCarriesTheNAXKillSwitch() {
+            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.naxDisableEnvVersion, 1)
+            XCTAssertEqual(GPUFamilyRoute.naxDisableEnvironmentKey, "MLX_DISABLE_NAX")
+        }
+
+        /// In a process started with `MLX_DISABLE_NAX=1` the core takes no NAX kernel. Skips
+        /// otherwise: the core reads the variable once, so a test cannot set it after another
+        /// test has run a GPU op.
+        func testNAXIsOffUnderTheKillSwitch() throws {
+            guard ProcessInfo.processInfo.environment["MLX_DISABLE_NAX"] == "1" else {
+                throw XCTSkip("run with MLX_DISABLE_NAX=1")
+            }
+            XCTAssertFalse(GPUFamilyRoute.isNAXAvailable)
+        }
     }
 
 #endif

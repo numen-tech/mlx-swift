@@ -48,6 +48,23 @@ void mlx_counters_reset(void);
  */
 int mlx_apple6_route_version(void);
 
+/**
+ * The version of the NAX kill switch the vendored numen-tech/mlx core carries
+ * (`mlx::core::metal::kNaxDisableEnvVersion`, device.h), 0 if it carries
+ * none. 1: `MLX_DISABLE_NAX=1`, set before the first GPU op, turns every NAX
+ * (gen >= 18) route off (numen-tech/gemma4-qat#1085). Constant per build. Not
+ * part of mlx-c.
+ */
+int mlx_nax_disable_env_version(void);
+
+/**
+ * `mlx::core::metal::is_nax_available()`: whether this process takes the NAX
+ * kernels. The first call fixes the answer for the process (it reads
+ * `MLX_DISABLE_NAX` then), so a caller that sets the variable must do so
+ * before this or any GPU op. Not part of mlx-c.
+ */
+int mlx_nax_available(void);
+
 #ifdef __cplusplus
 }
 #endif
