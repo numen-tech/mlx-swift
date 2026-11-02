@@ -35,11 +35,11 @@
             eval(a, b)
             for _ in 0 ..< 2 {
                 let (_, kernels) = GPUFamilyRoute.traceKernels {
-                    eval(add(a, b, stream: .gpu))
+                    eval(MLX.add(a, b, stream: .gpu))
                 }
                 XCTAssertFalse(kernels.isEmpty)
             }
-            eval(subtract(a, b, stream: .gpu))
+            eval(MLX.subtract(a, b, stream: .gpu))
             XCTAssertTrue(GPUFamilyRoute.traceKernels {}.kernels.isEmpty)
         }
 
