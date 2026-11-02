@@ -3,6 +3,7 @@
 #if MLX_GPU_COUNTERS
 
     import Cmlx
+    import Foundation
 
     /// The Apple6 (A13 / G12) route of the vendored numen-tech/mlx core.
     ///
@@ -26,20 +27,46 @@
         /// The route version the core carries; 0 when it carries none.
         public static var apple6MMAFreeVersion: Int { Int(mlx_apple6_route_version()) }
 
-        /// The version of the NAX kill switch the core carries
+        /// The version of the NAX switches the core carries
         /// (`mlx::core::metal::kNaxDisableEnvVersion`); 0 when it carries none.
         ///
         /// - 1: ``naxDisableEnvironmentKey`` set to `1` before the first GPU op turns every NAX
         ///   (GPU generation 18 and later) route off, so matmul, quantized matmul, attention and
         ///   gated delta take the kernels earlier generations take (numen-tech/gemma4-qat#1085).
+        /// - 2: also ``naxForceEnvironmentKey``, `1` to take NAX from GPU generation 17 and `0` to
+        ///   turn it off, and ``traceKernels(_:)`` (numen-tech/gemma4-qat#312).
         ///
         /// Constant for a build.
         public static var naxDisableEnvVersion: Int { Int(mlx_nax_disable_env_version()) }
 
         /// Whether this process takes the NAX kernels (`mlx::core::metal::is_nax_available()`).
         /// The first read (or the first GPU op that asks) fixes the answer for the process, since
-        /// the core reads ``naxDisableEnvironmentKey`` then: set the variable before it.
+        /// the core reads ``naxDisableEnvironmentKey`` and ``naxForceEnvironmentKey`` then: set
+        /// them before it.
         public static var isNAXAvailable: Bool { mlx_nax_available() != 0 }
+
+        /// Runs `body` and returns the name of every Metal kernel looked up meanwhile, cached or
+        /// not, in lookup order with repeats (needs ``naxDisableEnvVersion`` `>= 2`). `body` must
+        /// `eval` the op it wants traced. Process-wide and not reentrant: nothing else may run MLX
+        /// work during the call. For a harness that has to prove which kernel served an op, since
+        /// a fallback kernel also gives a plausible answer (numen-tech/gemma4-qat#312).
+        public static func traceKernels<R>(_ body: () throws -> R) rethrows -> (
+            result: R, kernels: [String]
+        ) {
+            mlx_kernel_trace_start()
+            func stop() -> [String] {
+                guard let joined = mlx_kernel_trace_stop() else { return [] }
+                defer { free(joined) }
+                return String(cString: joined).split(separator: "\n").map(String.init)
+            }
+            do {
+                let result = try body()
+                return (result, stop())
+            } catch {
+                _ = stop()
+                throw error
+            }
+        }
     }
 
 #else
@@ -48,6 +75,11 @@
         public static var apple6MMAFreeVersion: Int { 0 }
         public static var naxDisableEnvVersion: Int { 0 }
         public static var isNAXAvailable: Bool { false }
+        public static func traceKernels<R>(_ body: () throws -> R) rethrows -> (
+            result: R, kernels: [String]
+        ) {
+            (try body(), [])
+        }
     }
 
 #endif
@@ -55,4 +87,6 @@
 extension GPUFamilyRoute {
     /// The environment variable the core's NAX kill switch reads (``naxDisableEnvVersion`` >= 1).
     public static let naxDisableEnvironmentKey = "MLX_DISABLE_NAX"
+    /// The environment variable that overrides the core's NAX rule (``naxDisableEnvVersion`` >= 2).
+    public static let naxForceEnvironmentKey = "MLX_METAL_NAX"
 }

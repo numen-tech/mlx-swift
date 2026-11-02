@@ -1,5 +1,9 @@
 #include "mlx_counters.h"
 
+#include <cstdlib>
+#include <cstring>
+#include <string>
+
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/gpu_family.h"
 #include "mlx/backend/metal/metal.h"
@@ -38,4 +42,17 @@ extern "C" int mlx_nax_disable_env_version(void) {
 
 extern "C" int mlx_nax_available(void) {
   return mlx::core::metal::is_nax_available() ? 1 : 0;
+}
+
+extern "C" void mlx_kernel_trace_start(void) {
+  mlx::core::metal::kernel_trace_start();
+}
+
+extern "C" char* mlx_kernel_trace_stop(void) {
+  std::string joined;
+  for (const auto& name : mlx::core::metal::kernel_trace_stop()) {
+    joined += name;
+    joined += '\n';
+  }
+  return strdup(joined.c_str());
 }

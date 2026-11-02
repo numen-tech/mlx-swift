@@ -240,6 +240,29 @@ inline const std::string& force_gpu_family() {
   return force_gpu_family_;
 }
 
+// MLX_DISABLE_NAX=1 turns every NAX (gen >= 18 neural accelerator) route
+// off, so those GPUs take the kernels gen <= 17 takes. A kill switch for a GPU
+// generation the NAX kernels are not verified on (numen-tech/gemma4-qat#1085).
+// Read once, on the first metal::is_nax_available() call; set it before the
+// first GPU op.
+inline bool disable_nax() {
+  static bool disable_nax_ = get_var("MLX_DISABLE_NAX", 0);
+  return disable_nax_;
+}
+
+// MLX_METAL_NAX overrides the compiled NAX rule: 1 forces NAX on (still only on
+// macOS/iOS 26.2+ and architecture gen >= 17), 0 forces it off, unset or any
+// other value (-1 here) keeps the rule (gen >= 18). MLX_DISABLE_NAX=1 wins over
+// it. Read once, on the first metal::is_nax_available() call; set it before the
+// first GPU op (numen-tech/gemma4-qat#312).
+inline int metal_nax() {
+  static int metal_nax_ = [] {
+    int value = get_var("MLX_METAL_NAX", -1);
+    return (value == 0 || value == 1) ? value : -1;
+  }();
+  return metal_nax_;
+}
+
 inline const std::string& metal_gpu_arch() {
   static std::string gpu_arch_ = get_var("MLX_METAL_GPU_ARCH", "");
   return gpu_arch_;
