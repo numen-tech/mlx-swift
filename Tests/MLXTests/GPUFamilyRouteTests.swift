@@ -37,7 +37,11 @@
                 let (_, kernels) = GPUFamilyRoute.traceKernels {
                     eval(MLX.add(a, b, stream: .gpu))
                 }
-                XCTAssertFalse(kernels.isEmpty)
+                #if canImport(Metal)
+                    XCTAssertFalse(kernels.isEmpty)
+                #else
+                    XCTAssertTrue(kernels.isEmpty, "no Metal backend: the trace stays empty")
+                #endif
             }
             eval(MLX.subtract(a, b, stream: .gpu))
             XCTAssertTrue(GPUFamilyRoute.traceKernels {}.kernels.isEmpty)
