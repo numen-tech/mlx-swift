@@ -52,18 +52,34 @@ int mlx_apple6_route_version(void);
  * The version of the NAX kill switch the vendored numen-tech/mlx core carries
  * (`mlx::core::metal::kNaxDisableEnvVersion`, device.h), 0 if it carries
  * none. 1: `MLX_DISABLE_NAX=1`, set before the first GPU op, turns every NAX
- * (gen >= 18) route off (numen-tech/gemma4-qat#1085). Constant per build. Not
- * part of mlx-c.
+ * (gen >= 18) route off (numen-tech/gemma4-qat#1085). 2: also `MLX_METAL_NAX=1`
+ * (NAX from gen 17) and `=0` (off), and the kernel trace below
+ * (numen-tech/gemma4-qat#312). Constant per build. Not part of mlx-c.
  */
 int mlx_nax_disable_env_version(void);
 
 /**
  * `mlx::core::metal::is_nax_available()`: whether this process takes the NAX
  * kernels. The first call fixes the answer for the process (it reads
- * `MLX_DISABLE_NAX` then), so a caller that sets the variable must do so
- * before this or any GPU op. Not part of mlx-c.
+ * `MLX_DISABLE_NAX` and `MLX_METAL_NAX` then), so a caller that sets either
+ * must do so before this or any GPU op. Not part of mlx-c.
  */
 int mlx_nax_available(void);
+
+/**
+ * `mlx::core::metal::kernel_trace_start()`: from now until the next
+ * `mlx_kernel_trace_stop()`, record the name of every kernel looked up, cached
+ * or not (numen-tech/gemma4-qat#312). Process-wide; one trace at a time. Not
+ * part of mlx-c.
+ */
+void mlx_kernel_trace_start(void);
+
+/**
+ * `mlx::core::metal::kernel_trace_stop()`: ends the trace and returns its names,
+ * in lookup order, joined by newlines in a malloc'ed NUL-terminated string the
+ * caller frees. Without the Metal backend, an empty string. Not part of mlx-c.
+ */
+char* mlx_kernel_trace_stop(void);
 
 #ifdef __cplusplus
 }

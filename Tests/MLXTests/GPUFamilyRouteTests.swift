@@ -23,8 +23,28 @@
         /// The vendored core carries the NAX kill switch (numen-tech/gemma4-qat#1085), so a
         /// package that sets `MLX_DISABLE_NAX` for an unverified GPU generation gets the effect.
         func testVendoredCoreCarriesTheNAXKillSwitch() {
-            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.naxDisableEnvVersion, 1)
+            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.naxDisableEnvVersion, 2)
             XCTAssertEqual(GPUFamilyRoute.naxDisableEnvironmentKey, "MLX_DISABLE_NAX")
+            XCTAssertEqual(GPUFamilyRoute.naxForceEnvironmentKey, "MLX_METAL_NAX")
+        }
+
+        /// The trace sees a kernel on every lookup, not only its first load, and nothing after it ends.
+        func testKernelTraceSeesEveryLookup() {
+            let a = MLXArray.ones([8, 8], dtype: .float32, stream: .gpu)
+            let b = MLXArray.ones([8, 8], dtype: .float32, stream: .gpu)
+            eval(a, b)
+            for _ in 0 ..< 2 {
+                let (_, kernels) = GPUFamilyRoute.traceKernels {
+                    eval(MLX.add(a, b, stream: .gpu))
+                }
+                #if canImport(Metal)
+                    XCTAssertFalse(kernels.isEmpty)
+                #else
+                    XCTAssertTrue(kernels.isEmpty, "no Metal backend: the trace stays empty")
+                #endif
+            }
+            eval(MLX.subtract(a, b, stream: .gpu))
+            XCTAssertTrue(GPUFamilyRoute.traceKernels {}.kernels.isEmpty)
         }
 
         /// In a process started with `MLX_DISABLE_NAX=1` the core takes no NAX kernel. Skips
