@@ -45,7 +45,9 @@
         /// - 1: on a GPU with NAX (``isNAXAvailable``), an affine 2/4/8-bit split-K quantized
         ///   matmul of group size 32/64/128 (the verify widths from the qmv batch limit up, where
         ///   few threadgroups cover the output) takes the tensor-unit body for fp16 input, and fp32
-        ///   input under `MLX_ENABLE_TF32`; ``qmmSplitKNAXDisableEnvironmentKey`` set to `1` turns it
+        ///   input under `MLX_ENABLE_TF32`. The kernel is the `_nax_true` one either way, but at fp16
+        ///   the body runs only on 32-row tiles holding at most 16 rows (M <= 16, or the last tile);
+        ///   fuller fp16 tiles keep the SIMD body inside that kernel. ``qmmSplitKNAXDisableEnvironmentKey`` set to `1` turns it
         ///   off (read on every call). A GPU without NAX never compiles the body
         ///   (numen-tech/gemma4-qat#315).
         ///
