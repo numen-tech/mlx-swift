@@ -59,6 +59,17 @@ int mlx_apple6_route_version(void);
 int mlx_nax_disable_env_version(void);
 
 /**
+ * The version of the split-K quantized matmul's NAX route the vendored
+ * numen-tech/mlx core carries (`mlx::core::metal::kQmmSplitkNaxVersion`,
+ * device.h), 0 if it carries none. 1: on a NAX GPU an affine 2/4/8-bit split-K
+ * qmm of group size 32/64/128 takes the tensor-unit body (FP16 input, FP32
+ * under `MLX_ENABLE_TF32`), `MLX_DISABLE_QMM_SPLITK_NAX=1` turns it off, and a
+ * GPU without NAX never compiles it (numen-tech/gemma4-qat#315). Constant per
+ * build. Not part of mlx-c.
+ */
+int mlx_qmm_splitk_nax_version(void);
+
+/**
  * `mlx::core::metal::is_nax_available()`: whether this process takes the NAX
  * kernels. The first call fixes the answer for the process (it reads
  * `MLX_DISABLE_NAX` and `MLX_METAL_NAX` then), so a caller that sets either

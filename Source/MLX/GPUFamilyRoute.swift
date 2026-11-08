@@ -39,6 +39,19 @@
         /// Constant for a build.
         public static var naxDisableEnvVersion: Int { Int(mlx_nax_disable_env_version()) }
 
+        /// The version of the split-K quantized matmul's NAX route the core carries
+        /// (`mlx::core::metal::kQmmSplitkNaxVersion`); 0 when it carries none.
+        ///
+        /// - 1: on a GPU with NAX (``isNAXAvailable``), an affine 2/4/8-bit split-K quantized
+        ///   matmul of group size 32/64/128 (the verify widths from the qmv batch limit up, where
+        ///   few threadgroups cover the output) takes the tensor-unit body for fp16 input, and fp32
+        ///   input under `MLX_ENABLE_TF32`; ``qmmSplitKNAXDisableEnvironmentKey`` set to `1` turns it
+        ///   off (read on every call). A GPU without NAX never compiles the body
+        ///   (numen-tech/gemma4-qat#315).
+        ///
+        /// Constant for a build.
+        public static var qmmSplitKNAXVersion: Int { Int(mlx_qmm_splitk_nax_version()) }
+
         /// Whether this process takes the NAX kernels (`mlx::core::metal::is_nax_available()`).
         /// The first read (or the first GPU op that asks) fixes the answer for the process, since
         /// the core reads ``naxDisableEnvironmentKey`` and ``naxForceEnvironmentKey`` then: set
@@ -74,6 +87,7 @@
     public enum GPUFamilyRoute {
         public static var apple6MMAFreeVersion: Int { 0 }
         public static var naxDisableEnvVersion: Int { 0 }
+        public static var qmmSplitKNAXVersion: Int { 0 }
         public static var isNAXAvailable: Bool { false }
         public static func traceKernels<R>(_ body: () throws -> R) rethrows -> (
             result: R, kernels: [String]
@@ -89,4 +103,6 @@ extension GPUFamilyRoute {
     public static let naxDisableEnvironmentKey = "MLX_DISABLE_NAX"
     /// The environment variable that overrides the core's NAX rule (``naxDisableEnvVersion`` >= 2).
     public static let naxForceEnvironmentKey = "MLX_METAL_NAX"
+    /// The environment variable that turns the split-K NAX body off (``qmmSplitKNAXVersion`` >= 1).
+    public static let qmmSplitKNAXDisableEnvironmentKey = "MLX_DISABLE_QMM_SPLITK_NAX"
 }
