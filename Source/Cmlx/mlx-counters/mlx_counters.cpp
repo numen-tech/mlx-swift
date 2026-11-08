@@ -40,6 +40,10 @@ extern "C" int mlx_nax_disable_env_version(void) {
   return mlx::core::metal::kNaxDisableEnvVersion;
 }
 
+extern "C" int mlx_qmm_splitk_nax_version(void) {
+  return mlx::core::metal::kQmmSplitkNaxVersion;
+}
+
 extern "C" int mlx_nax_available(void) {
   return mlx::core::metal::is_nax_available() ? 1 : 0;
 }

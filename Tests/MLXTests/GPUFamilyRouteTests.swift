@@ -28,6 +28,49 @@
             XCTAssertEqual(GPUFamilyRoute.naxForceEnvironmentKey, "MLX_METAL_NAX")
         }
 
+        /// The vendored core carries the 2/4/8-bit split-K NAX route (numen-tech/gemma4-qat#315), so
+        /// a package that asserts it, or turns it off by its key, gets the route it names.
+        func testVendoredCoreCarriesTheSplitKNAXRoute() {
+            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.qmmSplitKNAXVersion, 1)
+            XCTAssertEqual(
+                GPUFamilyRoute.qmmSplitKNAXDisableEnvironmentKey, "MLX_DISABLE_QMM_SPLITK_NAX")
+        }
+
+        /// A split-K quantized matmul at a verify width names its NAX body flag: `_nax_true` where
+        /// the core takes NAX, `_nax_false` elsewhere and under the off switch, which the core
+        /// reads on every call. The JIT builds either kernel from its source here, so a GPU without
+        /// NAX also proves its split-K kernels still compile (numen-tech/gemma4-qat#315).
+        func testSplitKNAXKernelNamesItsRoute() {
+            // K > 4096 keeps M = 16 at or above every GPU's qmv batch limit; N = 1536 leaves few
+            // enough tiles for split-K.
+            let (wq, scales, biases) = quantized(
+                MLXRandom.normal([1536, 5120]).asType(.float16),
+                groupSize: 64, bits: 4, stream: .gpu)
+            let x = MLXRandom.normal([16, 5120]).asType(.float16)
+            func splitKKernels() -> [String] {
+                GPUFamilyRoute.traceKernels {
+                    eval(
+                        quantizedMM(
+                            x, wq, scales: scales, biases: biases, groupSize: 64, bits: 4,
+                            stream: .gpu))
+                }.kernels.filter { $0.contains("_qmm_t_splitk_") }
+            }
+            let key = GPUFamilyRoute.qmmSplitKNAXDisableEnvironmentKey
+            let saved = ProcessInfo.processInfo.environment[key]
+            defer {
+                if let saved { setenv(key, saved, 1) } else { unsetenv(key) }
+            }
+            unsetenv(key)
+            let flag = GPUFamilyRoute.isNAXAvailable ? "_nax_true" : "_nax_false"
+            let defaultRoute = splitKKernels()
+            XCTAssertFalse(defaultRoute.isEmpty, "M = 16 at K 5120 is a split-K qmm")
+            XCTAssertTrue(defaultRoute.allSatisfy { $0.hasSuffix(flag) }, "\(defaultRoute)")
+            setenv(key, "1", 1)
+            let off = splitKKernels()
+            XCTAssertFalse(off.isEmpty)
+            XCTAssertTrue(off.allSatisfy { $0.hasSuffix("_nax_false") }, "\(off)")
+        }
+
         /// The trace sees a kernel on every lookup, not only its first load, and nothing after it ends.
         func testKernelTraceSeesEveryLookup() {
             let a = MLXArray.ones([8, 8], dtype: .float32, stream: .gpu)
