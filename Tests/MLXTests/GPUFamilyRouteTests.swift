@@ -50,7 +50,7 @@
             func splitKKernels() -> [String] {
                 GPUFamilyRoute.traceKernels {
                     eval(
-                        quantizedMatmul(
+                        quantizedMM(
                             x, wq, scales: scales, biases: biases, groupSize: 64, bits: 4,
                             stream: .gpu))
                 }.kernels.filter { $0.contains("_qmm_t_splitk_") }
