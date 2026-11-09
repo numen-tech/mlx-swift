@@ -79,6 +79,17 @@ extern "C" size_t mlx_residency_wired_bytes(void) {
       .wired_size();
 }
 
+extern "C" int mlx_residency_sets_enabled(void) {
+  if (!mlx::core::metal::is_available()) {
+    return 0;
+  }
+  return mlx::core::metal::device(mlx::core::Device::gpu)
+             .residency_sets()
+             .enabled()
+      ? 1
+      : 0;
+}
+
 extern "C" int mlx_nax_available(void) {
   return mlx::core::metal::is_nax_available() ? 1 : 0;
 }

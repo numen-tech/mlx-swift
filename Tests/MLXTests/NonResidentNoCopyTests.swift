@@ -5,6 +5,7 @@
     import Darwin
     import Foundation
     import MLX
+    import Metal
     import XCTest
 
     private final class ReleaseCount: @unchecked Sendable {
@@ -38,9 +39,22 @@
             XCTAssertGreaterThanOrEqual(GPUFamilyRoute.nonResidentNoCopyVersion, 1)
         }
 
+        /// The core builds residency sets on a Metal 3 GPU from macOS 15 / iOS 18; anywhere else
+        /// nothing is tracked, and `residencyWiredBytes` reads 0 however high the limit is.
+        func testResidencySetAvailabilityMatchesTheCoreGate() {
+            let metal3 = MTLCreateSystemDefaultDevice()?.supportsFamily(.metal3) ?? false
+            var osSupportsSets = false
+            if #available(macOS 15, iOS 18, *) { osSupportsSets = true }
+            XCTAssertEqual(GPUFamilyRoute.residencySetsAvailable, metal3 && osSupportsSets)
+            if !GPUFamilyRoute.residencySetsAvailable {
+                XCTAssertEqual(GPUFamilyRoute.residencyWiredBytes, 0)
+            }
+        }
+
         /// A raised wired limit wires a plain no-copy array but never a non-resident one, and the
         /// non-resident one still reads the caller's bytes without a copy, on the CPU stream and
-        /// on the GPU.
+        /// on the GPU. Without residency sets nothing is ever wired, so only the wiring checks
+        /// are skipped there; the data and finalizer checks run everywhere.
         func testRaisedWiredLimitLeavesTheNonResidentArrayOut() async throws {
             guard Device.defaultDevice().deviceType == .gpu,
                 GPU.deviceInfo().maxRecommendedWorkingSetSize > 64 * mib
@@ -51,6 +65,7 @@
                 size: 256 * mib, policy: WiredSumPolicy(), manager: .shared, kind: .active)
             _ = await ticket.start()
             let baseline = GPUFamilyRoute.residencyWiredBytes
+            let tracksResidency = GPUFamilyRoute.residencySetsAvailable
 
             let released = ReleaseCount()
             do {
@@ -64,14 +79,18 @@
                 backing.withUnsafeBytes {
                     XCTAssertEqual($0.baseAddress, UnsafeRawPointer(pointer), "copied")
                 }
-                XCTAssertLessThan(GPUFamilyRoute.residencyWiredBytes - baseline, bytes)
+                if tracksResidency {
+                    XCTAssertLessThan(GPUFamilyRoute.residencyWiredBytes - baseline, bytes)
+                }
 
                 let rows = nonResident.take(MLXArray([0, 1, 2, 3, 4, 5, 6, 7] as [Int32]), stream: .cpu)
                 XCTAssertEqual(rows.asArray(Float.self), [0, 1, 2, 3, 4, 5, 6, 0])
                 let total = nonResident.sum(stream: .gpu)
                 eval(total)
                 XCTAssertEqual(total.item(Float.self), Float((0 ..< count).reduce(0) { $0 + $1 % 7 }))
-                XCTAssertLessThan(GPUFamilyRoute.residencyWiredBytes - baseline, bytes)
+                if tracksResidency {
+                    XCTAssertLessThan(GPUFamilyRoute.residencyWiredBytes - baseline, bytes)
+                }
 
                 // The control: the same kind of memory through the plain initializer is wired.
                 let plainPointer = pages(bytes)
@@ -79,7 +98,9 @@
                     free(plainPointer)
                 }
                 eval(plain)
-                XCTAssertGreaterThanOrEqual(GPUFamilyRoute.residencyWiredBytes, baseline + bytes)
+                if tracksResidency {
+                    XCTAssertGreaterThanOrEqual(GPUFamilyRoute.residencyWiredBytes, baseline + bytes)
+                }
             }
             // The last reference can drop on a command buffer's completion handler.
             Stream.gpu.synchronize()

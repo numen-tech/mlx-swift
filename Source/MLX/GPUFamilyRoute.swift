@@ -70,6 +70,11 @@
         /// what a raised wired limit covers (numen-tech/gemma4-qat#1228).
         public static var residencyWiredBytes: Int { Int(mlx_residency_wired_bytes()) }
 
+        /// Whether the GPU's Metal residency sets are on (a Metal 3 GPU on macOS 15 / iOS 18 or
+        /// later). Where they are not, nothing is tracked and ``residencyWiredBytes`` is always 0,
+        /// so a test that judges wiring by it checks this first (numen-tech/gemma4-qat#1228).
+        public static var residencySetsAvailable: Bool { mlx_residency_sets_enabled() != 0 }
+
         /// Whether this process takes the NAX kernels (`mlx::core::metal::is_nax_available()`).
         /// The first read (or the first GPU op that asks) fixes the answer for the process, since
         /// the core reads ``naxDisableEnvironmentKey`` and ``naxForceEnvironmentKey`` then: set
@@ -108,6 +113,7 @@
         public static var qmmSplitKNAXVersion: Int { 0 }
         public static var nonResidentNoCopyVersion: Int { 0 }
         public static var residencyWiredBytes: Int { 0 }
+        public static var residencySetsAvailable: Bool { false }
         public static var isNAXAvailable: Bool { false }
         public static func traceKernels<R>(_ body: () throws -> R) rethrows -> (
             result: R, kernels: [String]

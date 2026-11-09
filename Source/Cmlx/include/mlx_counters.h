@@ -108,6 +108,14 @@ mlx_array mlx_array_new_data_managed_payload_nonresident(
 size_t mlx_residency_wired_bytes(void);
 
 /**
+ * 1 when the GPU's Metal residency sets are on (`ResidencySets::enabled()`: a
+ * Metal 3 GPU on macOS 15 / iOS 18 or later), 0 without Metal or where they
+ * are unavailable, which is where `mlx_residency_wired_bytes` always reads 0
+ * (numen-tech/gemma4-qat#1228). Not part of mlx-c.
+ */
+int mlx_residency_sets_enabled(void);
+
+/**
  * `mlx::core::metal::is_nax_available()`: whether this process takes the NAX
  * kernels. The first call fixes the answer for the process (it reads
  * `MLX_DISABLE_NAX` and `MLX_METAL_NAX` then), so a caller that sets either
