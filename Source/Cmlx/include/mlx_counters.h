@@ -1,7 +1,10 @@
 #ifndef MLX_COUNTERS_H
 #define MLX_COUNTERS_H
 
+#include <stddef.h>
 #include <stdint.h>
+
+#include "mlx/c/array.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,6 +71,49 @@ int mlx_nax_disable_env_version(void);
  * build. Not part of mlx-c.
  */
 int mlx_qmm_splitk_nax_version(void);
+
+/**
+ * The version of `mlx::core::metal::nonresident_array` the vendored
+ * numen-tech/mlx core carries (`kNonresidentArrayVersion`, device.h), 0 if it
+ * carries none. 1: `mlx_array_new_data_managed_payload_nonresident` makes a
+ * no-copy array whose Metal buffer never joins the residency sets, so raising
+ * the wired limit never wires it (numen-tech/gemma4-qat#1228). Constant per
+ * build. Not part of mlx-c.
+ */
+int mlx_nonresident_array_version(void);
+
+/**
+ * `mlx_array_new_data_managed_payload` (mlx-c) through
+ * `mlx::core::metal::nonresident_array`: a no-copy array over `data` whose
+ * Metal buffer the allocator keeps out of the residency sets. `dtor(payload)`
+ * runs once, when the buffer is no longer needed. Where Metal refuses the
+ * pointer the core copies, as the plain constructor does. On error the result
+ * is an empty array and the mlx-c error handler is called. Not part of mlx-c.
+ */
+mlx_array mlx_array_new_data_managed_payload_nonresident(
+    void* data,
+    const int* shape,
+    int dim,
+    mlx_dtype dtype,
+    void* payload,
+    void (*dtor)(void*));
+
+/**
+ * The bytes the Metal residency sets wire right now
+ * (`ResidencySets::wired_size()`): every tracked allocation that fits the
+ * wired limit. 0 without Metal, or where residency sets are unavailable. A
+ * test reads it to prove what a raised wired limit covers
+ * (numen-tech/gemma4-qat#1228). Not part of mlx-c.
+ */
+size_t mlx_residency_wired_bytes(void);
+
+/**
+ * 1 when the GPU's Metal residency sets are on (`ResidencySets::enabled()`: a
+ * Metal 3 GPU on macOS 15 / iOS 18 or later), 0 without Metal or where they
+ * are unavailable, which is where `mlx_residency_wired_bytes` always reads 0
+ * (numen-tech/gemma4-qat#1228). Not part of mlx-c.
+ */
+int mlx_residency_sets_enabled(void);
 
 /**
  * `mlx::core::metal::is_nax_available()`: whether this process takes the NAX

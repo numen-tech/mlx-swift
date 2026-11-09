@@ -112,6 +112,43 @@ extension MLXArray {
                 payload, finalizerTrampoline))
     }
 
+    /// numen-tech fork addition (numen-tech/gemma4-qat#1228).
+    ///
+    /// Wraps caller memory without a copy, like ``init(rawPointer:_:dtype:finalizer:)``, but the
+    /// Metal buffer never joins MLX's residency sets: raising the wired limit
+    /// (``WiredMemoryManager``, `set_wired_limit`) never wires it, so its pages stay pageable for
+    /// as long as no GPU command binds the buffer. For a mapping that only the CPU stream reads,
+    /// such as a table gathered with `take(_:axis:stream: .cpu)`.
+    ///
+    /// Needs ``GPUFamilyRoute/nonResidentNoCopyVersion`` `>= 1`. A build without the shim
+    /// (``GPUFamilyRoute/nonResidentNoCopyVersion`` `== 0`) makes a plain no-copy array instead.
+    /// Where Metal refuses the pointer (not page aligned, say) the core copies, exactly as the
+    /// plain initializer does, and the copy is an ordinary residency-tracked allocation.
+    ///
+    /// - Parameters:
+    ///   - nonResidentRawPointer: raw pointer to input data; ownership is transferred to the array.
+    ///   - shape: shape of the data
+    ///   - dtype: data type
+    ///   - finalizer: closure that releases the memory, run once when the buffer is no longer
+    ///     needed
+    public convenience init(
+        nonResidentRawPointer rawPointer: UnsafeMutableRawPointer,
+        _ shape: some Collection<Int>, dtype: DType,
+        finalizer: @escaping () -> Void
+    ) {
+        #if MLX_GPU_COUNTERS
+            // Balanced by the `takeRetainedValue` in `finalizerTrampoline`, which the shim
+            // invokes once when the buffer is no longer needed.
+            let payload = Unmanaged.passRetained(FinalizerCaptureState(finalizer)).toOpaque()
+            self.init(
+                mlx_array_new_data_managed_payload_nonresident(
+                    rawPointer, shape.asInt32, shape.count.int32, dtype.cmlxDtype,
+                    payload, finalizerTrampoline))
+        #else
+            self.init(rawPointer: rawPointer, shape, dtype: dtype, finalizer: finalizer)
+        #endif
+    }
+
     /// Initializer allowing creation of scalar (0-dimension) `MLXArray` from an `Int32`.
     ///
     /// ```swift
