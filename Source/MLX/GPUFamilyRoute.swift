@@ -54,6 +54,22 @@
         /// Constant for a build.
         public static var qmmSplitKNAXVersion: Int { Int(mlx_qmm_splitk_nax_version()) }
 
+        /// The version of the non-resident no-copy array the core carries
+        /// (`mlx::core::metal::kNonresidentArrayVersion`); 0 when it carries none.
+        ///
+        /// - 1: ``MLXArray/init(nonResidentRawPointer:_:dtype:finalizer:)`` wraps caller memory
+        ///   without a copy, like ``MLXArray/init(rawPointer:_:dtype:finalizer:)``, but its Metal
+        ///   buffer never joins the residency sets, so a raised wired limit
+        ///   (``WiredMemoryManager``) never wires it (numen-tech/gemma4-qat#1228).
+        ///
+        /// Constant for a build.
+        public static var nonResidentNoCopyVersion: Int { Int(mlx_nonresident_array_version()) }
+
+        /// The bytes the Metal residency sets wire right now: every tracked allocation that fits
+        /// the wired limit (0 where residency sets are unavailable). For a test that has to prove
+        /// what a raised wired limit covers (numen-tech/gemma4-qat#1228).
+        public static var residencyWiredBytes: Int { Int(mlx_residency_wired_bytes()) }
+
         /// Whether this process takes the NAX kernels (`mlx::core::metal::is_nax_available()`).
         /// The first read (or the first GPU op that asks) fixes the answer for the process, since
         /// the core reads ``naxDisableEnvironmentKey`` and ``naxForceEnvironmentKey`` then: set
@@ -90,6 +106,8 @@
         public static var apple6MMAFreeVersion: Int { 0 }
         public static var naxDisableEnvVersion: Int { 0 }
         public static var qmmSplitKNAXVersion: Int { 0 }
+        public static var nonResidentNoCopyVersion: Int { 0 }
+        public static var residencyWiredBytes: Int { 0 }
         public static var isNAXAvailable: Bool { false }
         public static func traceKernels<R>(_ body: () throws -> R) rethrows -> (
             result: R, kernels: [String]
