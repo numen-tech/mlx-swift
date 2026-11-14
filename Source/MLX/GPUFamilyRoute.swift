@@ -131,4 +131,11 @@ extension GPUFamilyRoute {
     public static let naxForceEnvironmentKey = "MLX_METAL_NAX"
     /// The environment variable that turns the split-K NAX body off (``qmmSplitKNAXVersion`` >= 1).
     public static let qmmSplitKNAXDisableEnvironmentKey = "MLX_DISABLE_QMM_SPLITK_NAX"
+    /// The measurement switch between the candidate fixes for fp16 split-K tiles of more than 16
+    /// rows on a GPU with NAX (numen-tech/gemma4-qat#1651): `stock` (unset), `qmm` (an fp16 split-K
+    /// qmm of more than 16 rows goes to the NAX qmm, `affine_qmm_t_nax`) or `wide` (the split-K
+    /// kernel `affine_qmm_t_splitk_nax_wide`, NAX on all 32 rows of a tile). The core reads it once,
+    /// at the first eligible split-K qmm, so set it before any GPU work. No version constant
+    /// reports it yet: a core without it ignores the variable, which the kernel trace shows.
+    public static let qmmSplitKNAXTileEnvironmentKey = "MLX_QMM_SPLITK_NAX_TILE"
 }
