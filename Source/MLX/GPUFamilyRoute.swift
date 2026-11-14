@@ -103,6 +103,19 @@
                 throw error
             }
         }
+
+        /// ``traceKernels(_:)`` in two halves, for a harness whose traced work is asynchronous (a
+        /// whole chat turn on an actor): from this call until ``stopKernelTrace()``, record every
+        /// kernel looked up. Same rules: process-wide, not reentrant, nothing else may run MLX
+        /// work in between (numen-tech/gemma4-qat#1651).
+        public static func startKernelTrace() { mlx_kernel_trace_start() }
+
+        /// Ends the trace ``startKernelTrace()`` began; the names in lookup order with repeats.
+        public static func stopKernelTrace() -> [String] {
+            guard let joined = mlx_kernel_trace_stop() else { return [] }
+            defer { free(joined) }
+            return String(cString: joined).split(separator: "\n").map(String.init)
+        }
     }
 
 #else
@@ -120,6 +133,8 @@
         ) {
             (try body(), [])
         }
+        public static func startKernelTrace() {}
+        public static func stopKernelTrace() -> [String] { [] }
     }
 
 #endif
