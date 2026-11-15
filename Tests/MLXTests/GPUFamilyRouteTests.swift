@@ -119,14 +119,15 @@
             }
         }
 
-        /// A 512-row 4-bit fp16 matmul over N 1280 takes the 64 x 64 tiles with
+        /// A 2,048-row 4-bit fp16 matmul over N 2048 takes the 64 x 64 tiles with
         /// ``GPUFamilyRoute/qmmTile64EnvironmentKey`` set to `1` on a GPU without NAX, and the
-        /// 32 x 32 ones without it; a NAX GPU takes the NAX quantized matmul either way. Both routes
-        /// match the dequantized product (numen-tech/gemma4-qat#1695).
+        /// 32 x 32 ones without it; a NAX GPU takes the NAX quantized matmul either way. Its
+        /// 32 x 32 = 1,024 threadgroups of 64 x 64 meet an Ultra part's bar too. Both routes match
+        /// the dequantized product (numen-tech/gemma4-qat#1695).
         func testQmmTile64KernelNamesItsRoute() {
-            let w = MLXRandom.normal([1280, 256], key: MLXRandom.key(1)).asType(.float16)
+            let w = MLXRandom.normal([2048, 256], key: MLXRandom.key(1)).asType(.float16)
             let (wq, scales, biases) = quantized(w, groupSize: 64, bits: 4, stream: .gpu)
-            let x = MLXRandom.normal([512, 256], key: MLXRandom.key(2)).asType(.float16)
+            let x = MLXRandom.normal([2048, 256], key: MLXRandom.key(2)).asType(.float16)
             let reference = matmul(
                 x.asType(.float32),
                 dequantized(wq, scales: scales, biases: biases, groupSize: 64, bits: 4)
