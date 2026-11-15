@@ -119,6 +119,46 @@
             }
         }
 
+        /// A 512-row 4-bit fp16 matmul over N 1280 takes the 64 x 64 tiles with
+        /// ``GPUFamilyRoute/qmmTile64EnvironmentKey`` set to `1` on a GPU without NAX, and the
+        /// 32 x 32 ones without it; a NAX GPU takes the NAX quantized matmul either way. Both routes
+        /// match the dequantized product (numen-tech/gemma4-qat#1695).
+        func testQmmTile64KernelNamesItsRoute() {
+            let w = MLXRandom.normal([1280, 256], key: MLXRandom.key(1)).asType(.float16)
+            let (wq, scales, biases) = quantized(w, groupSize: 64, bits: 4, stream: .gpu)
+            let x = MLXRandom.normal([512, 256], key: MLXRandom.key(2)).asType(.float16)
+            let reference = matmul(
+                x.asType(.float32),
+                dequantized(wq, scales: scales, biases: biases, groupSize: 64, bits: 4)
+                    .asType(.float32).transposed())
+            func run() -> (MLXArray, [String]) {
+                let (y, kernels) = GPUFamilyRoute.traceKernels { () -> MLXArray in
+                    let y = quantizedMM(
+                        x, wq, scales: scales, biases: biases, groupSize: 64, bits: 4, stream: .gpu)
+                    eval(y)
+                    return y
+                }
+                return (y, kernels.filter { $0.contains("_qmm_t_") })
+            }
+            let key = GPUFamilyRoute.qmmTile64EnvironmentKey
+            let saved = ProcessInfo.processInfo.environment[key]
+            defer {
+                if let saved { setenv(key, saved, 1) } else { unsetenv(key) }
+            }
+            let nax = GPUFamilyRoute.isNAXAvailable
+            for on in [false, true] {
+                if on { setenv(key, "1", 1) } else { unsetenv(key) }
+                let (y, taken) = run()
+                XCTAssertFalse(taken.isEmpty, "on = \(on)")
+                let tile64 = taken.contains { $0.contains("_bm_64_bn_64") }
+                XCTAssertEqual(tile64, on && !nax, "on = \(on): \(taken)")
+                let error = abs(y.asType(.float32) - reference).max().item(Float.self)
+                let scale = abs(reference).max().item(Float.self)
+                XCTAssertLessThan(error / scale, 2e-3, "on = \(on)")
+            }
+            XCTAssertEqual(key, "MLX_QMM_TILE64")
+        }
+
         /// The trace sees a kernel on every lookup, not only its first load, and nothing after it ends.
         func testKernelTraceSeesEveryLookup() {
             let a = MLXArray.ones([8, 8], dtype: .float32, stream: .gpu)
