@@ -3,13 +3,13 @@
 import Foundation
 import MLX
 import MLXNN
-import XCTest
+import Testing
 
-class MLXFastKernelTests: XCTestCase {
+@Suite
+struct MLXFastKernelTests {
 
-    func testCustomKernelBasic() {
+    @Test(.randomSeed(7)) func customKernelBasic() {
         // based on def test_custom_kernel_basic
-        MLXRandom.seed(7)
         let a = normal([2, 2])
         let kernel = MLXFast.metalKernel(
             name: "basic",
@@ -27,12 +27,11 @@ class MLXFastKernelTests: XCTestCase {
             outputShapes: [[2, 2]],
             outputDTypes: [.float32])
 
-        XCTAssertTrue(allClose(out[0], a).all().item())
+        expectEqual(out[0], a)
     }
 
-    func testCustomKernelArgs() {
+    @Test(.randomSeed(7)) func customKernelArgs() {
         // based on def test_custom_kernel_args
-        MLXRandom.seed(7)
         let a = normal([3, 6])
         let c = normal([2, 2]).asType(.bfloat16)
 
@@ -68,11 +67,11 @@ class MLXFastKernelTests: XCTestCase {
             outputShapes: [[2, 2], [3, 2]],
             outputDTypes: [.float32, .int32])
 
-        XCTAssertTrue(allClose(out[0], full([2, 2], values: 14.0484)).all().item())
-        XCTAssertTrue(allClose(out[1], full([3, 2], values: -2)).all().item())
+        expectEqual(out[0], full([2, 2], values: 14.0484))
+        expectEqual(out[1], full([3, 2], values: -2))
     }
 
-    func testFastSDPA() {
+    @Test func fastSDPA() {
         // https://github.com/ml-explore/mlx-swift/issues/172
         // this will just make sure the MLXFast.scaled_dot_product_attention is
         // callable in the various cases, based on
@@ -98,8 +97,7 @@ class MLXFastKernelTests: XCTestCase {
         }
     }
 
-    func testFastSDPAOutput() {
-        MLXRandom.seed(0)
+    @Test(.randomSeed(0)) func fastSDPAOutput() {
         let queries = MLXRandom.uniform(0.0 ..< 1.0, [1, 32, 1, 80])
         let keys = MLXRandom.uniform(0.0 ..< 1.0, [1, 32, 9, 80])
         let values = MLXRandom.uniform(0.0 ..< 1.0, [1, 32, 9, 80])
@@ -107,13 +105,12 @@ class MLXFastKernelTests: XCTestCase {
             queries: queries, keys: keys, values: values, scale: 0.1118, mask: .none)
         print(result.shape)
         print(result.sum().item(Float.self))
-        XCTAssertEqual(result.shape, [1, 32, 1, 80])
-        XCTAssertEqual(result.sum().item(Float.self), 1281.9253, accuracy: 0.01)
+        #expect(result.shape == [1, 32, 1, 80])
+        expectEqual(result.sum().item(Float.self), 1281.9253, accuracy: 0.01)
     }
 
-    func testFreeSDPAForceFused() {
+    @Test(.randomSeed(0)) func freeSDPAForceFused() {
         // the free function forwards forceFused: a fused kernel gives the same values
-        MLXRandom.seed(0)
         let queries = MLXRandom.uniform(0.0 ..< 1.0, [1, 8, 16, 64])
         let keys = MLXRandom.uniform(0.0 ..< 1.0, [1, 8, 16, 64])
         let values = MLXRandom.uniform(0.0 ..< 1.0, [1, 8, 16, 64])
@@ -124,17 +121,16 @@ class MLXFastKernelTests: XCTestCase {
             queries: queries, keys: keys, values: values, scale: 0.125, mask: nil,
             forceFused: true)
 
-        XCTAssertEqual(fused.shape, [1, 8, 16, 64])
-        XCTAssertTrue(allClose(fused, expected, rtol: 1e-4, atol: 1e-5).item())
+        #expect(fused.shape == [1, 8, 16, 64])
+        expectEqual(fused, expected, rtol: 1e-4, atol: 1e-5)
     }
 
-    func testRoPEOutput() {
+    @Test(.randomSeed(0)) func ropeOutput() {
         // https://github.com/ml-explore/mlx-swift/issues/315
-        MLXRandom.seed(0)
         let rope = RoPE(dimensions: 32, traditional: false, base: 10_000, scale: 1)
         let queries = MLXRandom.uniform(0.0 ..< 1.0, [1, 32, 1, 80])
         print(queries.shape)
         let result = rope(queries, offset: 8)
-        XCTAssertEqual(result.sum().item(Float.self), 1079.7894, accuracy: 0.01)
+        expectEqual(result.sum().item(Float.self), 1079.7894, accuracy: 0.01)
     }
 }
