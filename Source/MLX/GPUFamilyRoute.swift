@@ -50,6 +50,8 @@
         ///   fuller fp16 tiles keep the SIMD body inside that kernel. ``qmmSplitKNAXDisableEnvironmentKey`` set to `1` turns it
         ///   off (read on every call). A GPU without NAX never compiles the body
         ///   (numen-tech/gemma4-qat#315).
+        /// - 2: an fp16 split-K matmul of more than 16 rows falls through to the NAX quantized
+        ///   matmul; ``qmmSplitKFallthroughDisableEnvironmentKey`` set to `1` turns it off.
         ///
         /// Constant for a build.
         public static var qmmSplitKNAXVersion: Int { Int(mlx_qmm_splitk_nax_version()) }
@@ -103,6 +105,19 @@
                 throw error
             }
         }
+
+        /// ``traceKernels(_:)`` in two halves, for a harness whose traced work is asynchronous (a
+        /// whole chat turn on an actor): from this call until ``stopKernelTrace()``, record every
+        /// kernel looked up. Same rules: process-wide, not reentrant, nothing else may run MLX
+        /// work in between (numen-tech/gemma4-qat#1651).
+        public static func startKernelTrace() { mlx_kernel_trace_start() }
+
+        /// Ends the trace ``startKernelTrace()`` began; the names in lookup order with repeats.
+        public static func stopKernelTrace() -> [String] {
+            guard let joined = mlx_kernel_trace_stop() else { return [] }
+            defer { free(joined) }
+            return String(cString: joined).split(separator: "\n").map(String.init)
+        }
     }
 
 #else
@@ -120,6 +135,8 @@
         ) {
             (try body(), [])
         }
+        public static func startKernelTrace() {}
+        public static func stopKernelTrace() -> [String] { [] }
     }
 
 #endif
@@ -131,4 +148,6 @@ extension GPUFamilyRoute {
     public static let naxForceEnvironmentKey = "MLX_METAL_NAX"
     /// The environment variable that turns the split-K NAX body off (``qmmSplitKNAXVersion`` >= 1).
     public static let qmmSplitKNAXDisableEnvironmentKey = "MLX_DISABLE_QMM_SPLITK_NAX"
+    /// The environment variable that turns the split-K fall-through off (``qmmSplitKNAXVersion`` >= 2).
+    public static let qmmSplitKFallthroughDisableEnvironmentKey = "MLX_DISABLE_QMM_SPLITK_FALLTHROUGH"
 }
