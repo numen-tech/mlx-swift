@@ -74,13 +74,10 @@
             XCTAssertTrue(off.allSatisfy { $0.hasSuffix("_nax_false") }, "\(off)")
         }
 
-        /// An fp16 split-K quantized matmul of more than 16 rows falls through to the NAX quantized
-        /// matmul where the core takes NAX, and keeps the split-K kernel under the fall-through's
-        /// off switch (read on every call) and on a GPU without NAX; 16 rows keep split-K either
-        /// way (numen-tech/gemma4-qat#1651).
+        /// An fp16 split-K matmul of more than 16 rows takes the NAX quantized matmul on NAX; 16 rows,
+        /// the off switch and a GPU without NAX keep split-K.
         func testSplitKFallthroughAbove16Rows() {
-            // K > 4096 keeps every M here at or above every GPU's qmv batch limit; N = 512 keeps
-            // split-K up to M = 128 without the fall-through.
+            // K > 4096 keeps every M here at or above every GPU's qmv batch limit.
             let (wq, scales, biases) = quantized(
                 MLXRandom.normal([512, 5120]).asType(.float16),
                 groupSize: 64, bits: 4, stream: .gpu)
