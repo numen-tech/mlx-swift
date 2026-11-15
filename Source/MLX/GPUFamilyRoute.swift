@@ -50,6 +50,11 @@
         ///   fuller fp16 tiles keep the SIMD body inside that kernel. ``qmmSplitKNAXDisableEnvironmentKey`` set to `1` turns it
         ///   off (read on every call). A GPU without NAX never compiles the body
         ///   (numen-tech/gemma4-qat#315).
+        /// - 2: such an fp16 split-K matmul of more than 16 rows with K % 64 == 0 falls through to
+        ///   the NAX quantized matmul (`affine_qmm_t_nax`), which runs every row on the tensor units;
+        ///   16 rows and fewer keep the `_nax_true` split-K kernel.
+        ///   ``qmmSplitKFallthroughDisableEnvironmentKey`` set to `1` restores the version 1 route
+        ///   bit for bit (read on every call) (numen-tech/gemma4-qat#1651).
         ///
         /// Constant for a build.
         public static var qmmSplitKNAXVersion: Int { Int(mlx_qmm_splitk_nax_version()) }
@@ -146,11 +151,7 @@ extension GPUFamilyRoute {
     public static let naxForceEnvironmentKey = "MLX_METAL_NAX"
     /// The environment variable that turns the split-K NAX body off (``qmmSplitKNAXVersion`` >= 1).
     public static let qmmSplitKNAXDisableEnvironmentKey = "MLX_DISABLE_QMM_SPLITK_NAX"
-    /// The measurement switch between the candidate fixes for fp16 split-K tiles of more than 16
-    /// rows on a GPU with NAX (numen-tech/gemma4-qat#1651): `stock` (unset), `qmm` (an fp16 split-K
-    /// qmm of more than 16 rows goes to the NAX qmm, `affine_qmm_t_nax`) or `wide` (the split-K
-    /// kernel `affine_qmm_t_splitk_nax_wide`, NAX on all 32 rows of a tile). The core reads it once,
-    /// at the first eligible split-K qmm, so set it before any GPU work. No version constant
-    /// reports it yet: a core without it ignores the variable, which the kernel trace shows.
-    public static let qmmSplitKNAXTileEnvironmentKey = "MLX_QMM_SPLITK_NAX_TILE"
+    /// The environment variable that turns the fp16 split-K fall-through to the NAX quantized
+    /// matmul off, back to the split-K kernel above 16 rows (``qmmSplitKNAXVersion`` >= 2).
+    public static let qmmSplitKFallthroughDisableEnvironmentKey = "MLX_DISABLE_QMM_SPLITK_FALLTHROUGH"
 }

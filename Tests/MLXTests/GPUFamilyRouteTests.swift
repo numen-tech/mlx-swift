@@ -31,9 +31,12 @@
         /// The vendored core carries the 2/4/8-bit split-K NAX route (numen-tech/gemma4-qat#315), so
         /// a package that asserts it, or turns it off by its key, gets the route it names.
         func testVendoredCoreCarriesTheSplitKNAXRoute() {
-            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.qmmSplitKNAXVersion, 1)
+            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.qmmSplitKNAXVersion, 2)
             XCTAssertEqual(
                 GPUFamilyRoute.qmmSplitKNAXDisableEnvironmentKey, "MLX_DISABLE_QMM_SPLITK_NAX")
+            XCTAssertEqual(
+                GPUFamilyRoute.qmmSplitKFallthroughDisableEnvironmentKey,
+                "MLX_DISABLE_QMM_SPLITK_FALLTHROUGH")
         }
 
         /// A split-K quantized matmul at a verify width names its NAX body flag: `_nax_true` where
@@ -69,6 +72,54 @@
             let off = splitKKernels()
             XCTAssertFalse(off.isEmpty)
             XCTAssertTrue(off.allSatisfy { $0.hasSuffix("_nax_false") }, "\(off)")
+        }
+
+        /// An fp16 split-K quantized matmul of more than 16 rows falls through to the NAX quantized
+        /// matmul where the core takes NAX, and keeps the split-K kernel under the fall-through's
+        /// off switch (read on every call) and on a GPU without NAX; 16 rows keep split-K either
+        /// way (numen-tech/gemma4-qat#1651).
+        func testSplitKFallthroughAbove16Rows() {
+            // K > 4096 keeps every M here at or above every GPU's qmv batch limit; N = 512 keeps
+            // split-K up to M = 128 without the fall-through.
+            let (wq, scales, biases) = quantized(
+                MLXRandom.normal([512, 5120]).asType(.float16),
+                groupSize: 64, bits: 4, stream: .gpu)
+            func kernels(rows: Int) -> [String] {
+                let x = MLXRandom.normal([rows, 5120]).asType(.float16)
+                return GPUFamilyRoute.traceKernels {
+                    eval(
+                        quantizedMM(
+                            x, wq, scales: scales, biases: biases, groupSize: 64, bits: 4,
+                            stream: .gpu))
+                }.kernels.filter { $0.contains("_qmm_t_") }
+            }
+            let key = GPUFamilyRoute.qmmSplitKFallthroughDisableEnvironmentKey
+            let saved = ProcessInfo.processInfo.environment[key]
+            defer {
+                if let saved { setenv(key, saved, 1) } else { unsetenv(key) }
+            }
+            unsetenv(key)
+            let nax = GPUFamilyRoute.isNAXAvailable
+            for rows in [17, 32, 64] {
+                let taken = kernels(rows: rows)
+                XCTAssertFalse(taken.isEmpty, "M = \(rows)")
+                if nax {
+                    XCTAssertTrue(taken.allSatisfy { $0.contains("_qmm_t_nax_") }, "\(taken)")
+                } else {
+                    XCTAssertTrue(taken.allSatisfy { $0.contains("_qmm_t_splitk_") }, "\(taken)")
+                }
+            }
+            let sixteen = kernels(rows: 16)
+            XCTAssertTrue(
+                !sixteen.isEmpty && sixteen.allSatisfy { $0.contains("_qmm_t_splitk_") },
+                "\(sixteen)")
+            setenv(key, "1", 1)
+            for rows in [16, 17, 32, 64] {
+                let taken = kernels(rows: rows)
+                XCTAssertTrue(
+                    !taken.isEmpty && taken.allSatisfy { $0.contains("_qmm_t_splitk_") },
+                    "M = \(rows): \(taken)")
+            }
         }
 
         /// The trace sees a kernel on every lookup, not only its first load, and nothing after it ends.
