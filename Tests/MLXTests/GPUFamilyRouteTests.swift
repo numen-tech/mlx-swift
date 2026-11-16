@@ -3,6 +3,7 @@
 #if MLX_GPU_COUNTERS
 
     import MLX
+    import Metal
     import XCTest
 
     class GPUFamilyRouteTests: XCTestCase {
@@ -123,8 +124,19 @@
         /// ``GPUFamilyRoute/qmmTile64EnvironmentKey`` set to `1` on a GPU without NAX, and the
         /// 32 x 32 ones without it; a NAX GPU takes the NAX quantized matmul either way. Its
         /// 32 x 32 = 1,024 threadgroups of 64 x 64 meet an Ultra part's bar too. Both routes match
-        /// the dequantized product (numen-tech/gemma4-qat#1695).
-        func testQmmTile64KernelNamesItsRoute() {
+        /// the dequantized product (numen-tech/gemma4-qat#1695). An Apple6 GPU takes qgemm_simt.
+        func testQmmTile64KernelNamesItsRoute() throws {
+            // The core's Apple6 test (`Device::is_apple6()`).
+            #if os(macOS)
+                let device = MTLCopyAllDevices().first ?? MTLCreateSystemDefaultDevice()
+            #else
+                let device = MTLCreateSystemDefaultDevice()
+            #endif
+            let apple6 =
+                ProcessInfo.processInfo.environment["MLX_FORCE_GPU_FAMILY"] == "apple6"
+                || (device?.supportsFamily(.apple6) == true
+                    && device?.supportsFamily(.apple7) == false)
+            try XCTSkipIf(apple6, "the Apple6 route never reaches qmm()")
             let w = MLXRandom.normal([2048, 256], key: MLXRandom.key(1)).asType(.float16)
             let (wq, scales, biases) = quantized(w, groupSize: 64, bits: 4, stream: .gpu)
             let x = MLXRandom.normal([2048, 256], key: MLXRandom.key(2)).asType(.float16)
