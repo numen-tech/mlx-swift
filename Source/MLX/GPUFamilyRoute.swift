@@ -150,4 +150,7 @@ extension GPUFamilyRoute {
     public static let qmmSplitKNAXDisableEnvironmentKey = "MLX_DISABLE_QMM_SPLITK_NAX"
     /// The environment variable that turns the split-K fall-through off (``qmmSplitKNAXVersion`` >= 2).
     public static let qmmSplitKFallthroughDisableEnvironmentKey = "MLX_DISABLE_QMM_SPLITK_FALLTHROUGH"
+    /// `1` turns on the 64 x 64 affine qmm tiles on a GPU without NAX (kernel names end
+    /// `_bm_64_bn_64`); the core reads it on every call. No version constant reports it.
+    public static let qmmTile64EnvironmentKey = "MLX_QMM_TILE64"
 }
