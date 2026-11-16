@@ -150,11 +150,7 @@ extension GPUFamilyRoute {
     public static let qmmSplitKNAXDisableEnvironmentKey = "MLX_DISABLE_QMM_SPLITK_NAX"
     /// The environment variable that turns the split-K fall-through off (``qmmSplitKNAXVersion`` >= 2).
     public static let qmmSplitKFallthroughDisableEnvironmentKey = "MLX_DISABLE_QMM_SPLITK_FALLTHROUGH"
-    /// The measurement switch for 64 x 64 tiles in large affine quantized matmuls on a GPU without
-    /// NAX (numen-tech/gemma4-qat#1695): `1` turns them on; unset or any other value keeps the
-    /// 32 x 32 tiles bit for bit. A transposed, non-batched 4-bit matmul of at least 512 rows (8-bit:
-    /// 2048) with enough output tiles then takes `affine_qmm_t_..._bm_64_bn_64`. The core reads it
-    /// on every call. No version constant reports it yet: a core without it ignores the variable,
-    /// which the kernel trace shows.
+    /// `1` turns on the 64 x 64 affine qmm tiles on a GPU without NAX (kernel names end
+    /// `_bm_64_bn_64`); the core reads it on every call. No version constant reports it.
     public static let qmmTile64EnvironmentKey = "MLX_QMM_TILE64"
 }

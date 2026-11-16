@@ -120,11 +120,7 @@
             }
         }
 
-        /// A 2,048-row 4-bit fp16 matmul over N 2048 takes the 64 x 64 tiles with
-        /// ``GPUFamilyRoute/qmmTile64EnvironmentKey`` set to `1` on a GPU without NAX, and the
-        /// 32 x 32 ones without it; a NAX GPU takes the NAX quantized matmul either way. Its
-        /// 32 x 32 = 1,024 threadgroups of 64 x 64 meet an Ultra part's bar too. Both routes match
-        /// the dequantized product (numen-tech/gemma4-qat#1695). An Apple6 GPU takes qgemm_simt.
+        /// 2048 x 2048 is 1,024 tiles of 64 x 64, enough for an Ultra part too.
         func testQmmTile64KernelNamesItsRoute() throws {
             // The core's Apple6 test (`Device::is_apple6()`).
             #if os(macOS)
