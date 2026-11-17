@@ -54,6 +54,10 @@ extern "C" int mlx_qmv_mma_version(void) {
   return mlx::core::metal::kQmvMmaVersion;
 }
 
+extern "C" int mlx_gather_implied_bias_version(void) {
+  return mlx::core::metal::kGatherImpliedBiasVersion;
+}
+
 extern "C" mlx_array mlx_array_new_data_managed_payload_nonresident(
     void* data,
     const int* shape,

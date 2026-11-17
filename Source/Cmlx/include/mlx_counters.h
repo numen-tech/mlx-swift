@@ -94,6 +94,18 @@ int mlx_nonresident_array_version(void);
 int mlx_qmv_mma_version(void);
 
 /**
+ * The version of the implied-bias gather kernels the vendored numen-tech/mlx
+ * core carries (`mlx::core::metal::kGatherImpliedBiasVersion`, device.h), 0 if
+ * it carries none. 1: `mlx_gather_qmm` keeps a 0-d implied-bias factor for a
+ * transposed product of one row per matrix on the GPU (unpromoted scales,
+ * 1/2/4/8 bits), and the affine `gather_qmv`, `gather_qmv_fast`,
+ * `gather_qmm_rhs` and `gather_qmm_rhs_nax` kernels form the bias from it;
+ * every other call materializes the bias (numen-tech/gemma4-qat#1833).
+ * Constant per build. Not part of mlx-c.
+ */
+int mlx_gather_implied_bias_version(void);
+
+/**
  * `mlx::core::metal::set_qmv_mma(enabled != 0)`: turns the affine qmv_mma route
  * on or off for the process, as `MLX_QMV_MMA=1` does, without touching the
  * environment (a host that switches it per model load; setenv/unsetenv may race
