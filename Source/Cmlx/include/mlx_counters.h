@@ -85,12 +85,29 @@ int mlx_nonresident_array_version(void);
 /**
  * The version of the affine qmv_mma route the vendored numen-tech/mlx core
  * carries (`mlx::core::metal::kQmvMmaVersion`, device.h), 0 if it carries
- * none. 1: `MLX_QMV_MMA=1` (read on every call, off by default) routes an
- * affine 4/8-bit transposed quantized matmul of 4-16 rows (3-16 below GPU gen
- * 15) to ml-explore/mlx#4787's `affine_qmv_mma` on a GPU without NAX
- * (numen-tech/gemma4-qat#1701). Constant per build. Not part of mlx-c.
+ * none. 1: `MLX_QMV_MMA=1` (never cached, off by default) routes an affine
+ * 4/8-bit transposed quantized matmul of 4-16 rows (3-16 below GPU gen 15) to
+ * ml-explore/mlx#4787's `affine_qmv_mma` on a GPU without NAX
+ * (numen-tech/gemma4-qat#1701). 2: `mlx_set_qmv_mma` and `mlx_qmv_mma_device`.
+ * Constant per build. Not part of mlx-c.
  */
 int mlx_qmv_mma_version(void);
+
+/**
+ * `mlx::core::metal::set_qmv_mma(enabled != 0)`: turns the affine qmv_mma route
+ * on or off for the process, as `MLX_QMV_MMA=1` does, without touching the
+ * environment (a host that switches it per model load; setenv/unsetenv may race
+ * another thread's dispatch). The route is on while either is. Needs
+ * `mlx_qmv_mma_version() >= 2`. Not part of mlx-c.
+ */
+void mlx_set_qmv_mma(int enabled);
+
+/**
+ * `mlx::core::metal::qmv_mma_device()`: 1 when this GPU can take the affine
+ * qmv_mma route at all (no NAX, not Apple6, not an Ultra), else 0. Needs
+ * `mlx_qmv_mma_version() >= 2`. Not part of mlx-c.
+ */
+int mlx_qmv_mma_device(void);
 
 /**
  * `mlx_array_new_data_managed_payload` (mlx-c) through

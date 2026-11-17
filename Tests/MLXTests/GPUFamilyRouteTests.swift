@@ -172,7 +172,7 @@
         /// GPU without NAX (not on Apple6, which has no simdgroup matrices, nor an Ultra); 2 rows never
         /// take it (numen-tech/gemma4-qat#1701).
         func testQmvMMAKernelNamesItsRoute() throws {
-            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.qmvMMAVersion, 1)
+            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.qmvMMAVersion, 2)
             #if os(macOS)
                 let device = MTLCopyAllDevices().first ?? MTLCreateSystemDefaultDevice()
             #else
@@ -192,6 +192,7 @@
             // The core keeps an Ultra part (architecture ending `d`) on the vector kernels.
             let ultra = GPU.deviceInfo().architecture.hasSuffix("d")
             let eligible = !GPUFamilyRoute.isNAXAvailable && !apple6 && !ultra
+            XCTAssertEqual(GPUFamilyRoute.qmvMMADevice, eligible)
             for rows in [2, 4] {
                 let x = MLXRandom.normal([rows, 1024], key: MLXRandom.key(4)).asType(.float16)
                 let reference = matmul(
@@ -215,6 +216,32 @@
                 }
             }
             XCTAssertEqual(key, "MLX_QMV_MMA")
+        }
+
+        /// ``GPUFamilyRoute/setQmvMMA(_:)`` takes the route as the variable does, with the variable
+        /// unset, and off again leaves it to the variable (numen-tech/gemma4-qat#1701).
+        func testSetQmvMMATakesTheRouteWithoutTheEnvironment() throws {
+            let key = GPUFamilyRoute.qmvMMAEnvironmentKey
+            let saved = ProcessInfo.processInfo.environment[key]
+            unsetenv(key)
+            defer {
+                GPUFamilyRoute.setQmvMMA(false)
+                if let saved { setenv(key, saved, 1) }
+            }
+            let w = MLXRandom.normal([2048, 1024], key: MLXRandom.key(3)).asType(.float16)
+            let (wq, scales, biases) = quantized(w, groupSize: 64, bits: 4, stream: .gpu)
+            let x = MLXRandom.normal([4, 1024], key: MLXRandom.key(4)).asType(.float16)
+            for on in [true, false] {
+                GPUFamilyRoute.setQmvMMA(on)
+                let (_, kernels) = GPUFamilyRoute.traceKernels { () -> MLXArray in
+                    let y = quantizedMM(
+                        x, wq, scales: scales, biases: biases, groupSize: 64, bits: 4, stream: .gpu)
+                    eval(y)
+                    return y
+                }
+                let taken = kernels.contains { $0.hasPrefix("affine_qmv_mma_") }
+                XCTAssertEqual(taken, on && GPUFamilyRoute.qmvMMADevice, "on \(on): \(kernels)")
+            }
         }
 
         /// The trace sees a kernel on every lookup, not only its first load, and nothing after it ends.
