@@ -50,6 +50,10 @@ extern "C" int mlx_nonresident_array_version(void) {
   return mlx::core::metal::kNonresidentArrayVersion;
 }
 
+extern "C" int mlx_qmv_mma_version(void) {
+  return mlx::core::metal::kQmvMmaVersion;
+}
+
 extern "C" mlx_array mlx_array_new_data_managed_payload_nonresident(
     void* data,
     const int* shape,

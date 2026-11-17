@@ -67,6 +67,17 @@
         /// Constant for a build.
         public static var nonResidentNoCopyVersion: Int { Int(mlx_nonresident_array_version()) }
 
+        /// The version of the affine qmv_mma route the core carries
+        /// (`mlx::core::metal::kQmvMmaVersion`); 0 when it carries none.
+        ///
+        /// - 1: ``qmvMMAEnvironmentKey`` set to `1` (read on every call, off by default) routes an
+        ///   affine 4/8-bit transposed quantized matmul of 4-16 rows (3-16 below GPU gen 15) with
+        ///   K % 128 == 0 to ml-explore/mlx#4787's `affine_qmv_mma` on a GPU without NAX, for the
+        ///   shapes upstream's rule takes (numen-tech/gemma4-qat#1701).
+        ///
+        /// Constant for a build.
+        public static var qmvMMAVersion: Int { Int(mlx_qmv_mma_version()) }
+
         /// The bytes the Metal residency sets wire right now: every tracked allocation that fits
         /// the wired limit (0 where residency sets are unavailable). For a test that has to prove
         /// what a raised wired limit covers (numen-tech/gemma4-qat#1228).
@@ -127,6 +138,7 @@
         public static var naxDisableEnvVersion: Int { 0 }
         public static var qmmSplitKNAXVersion: Int { 0 }
         public static var nonResidentNoCopyVersion: Int { 0 }
+        public static var qmvMMAVersion: Int { 0 }
         public static var residencyWiredBytes: Int { 0 }
         public static var residencySetsAvailable: Bool { false }
         public static var isNAXAvailable: Bool { false }
@@ -153,4 +165,7 @@ extension GPUFamilyRoute {
     /// `1` turns on the 64 x 64 affine qmm tiles on a GPU without NAX (kernel names end
     /// `_bm_64_bn_64`); the core reads it on every call. No version constant reports it.
     public static let qmmTile64EnvironmentKey = "MLX_QMM_TILE64"
+    /// `1` turns on the affine qmv_mma route on a GPU without NAX (kernel names start
+    /// `affine_qmv_mma_`; ``qmvMMAVersion`` >= 1); the core reads it on every call.
+    public static let qmvMMAEnvironmentKey = "MLX_QMV_MMA"
 }
