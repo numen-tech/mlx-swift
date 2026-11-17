@@ -50,6 +50,10 @@ extern "C" int mlx_nonresident_array_version(void) {
   return mlx::core::metal::kNonresidentArrayVersion;
 }
 
+extern "C" int mlx_qmv_mma_version(void) {
+  return mlx::core::metal::kQmvMmaVersion;
+}
+
 extern "C" mlx_array mlx_array_new_data_managed_payload_nonresident(
     void* data,
     const int* shape,
@@ -92,6 +96,14 @@ extern "C" int mlx_residency_sets_enabled(void) {
 
 extern "C" int mlx_nax_available(void) {
   return mlx::core::metal::is_nax_available() ? 1 : 0;
+}
+
+extern "C" void mlx_set_qmv_mma(int enabled) {
+  mlx::core::metal::set_qmv_mma(enabled != 0);
+}
+
+extern "C" int mlx_qmv_mma_device(void) {
+  return mlx::core::metal::qmv_mma_device() ? 1 : 0;
 }
 
 extern "C" void mlx_kernel_trace_start(void) {
