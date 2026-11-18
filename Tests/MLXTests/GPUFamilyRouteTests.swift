@@ -263,6 +263,103 @@
             XCTAssertTrue(GPUFamilyRoute.traceKernels {}.kernels.isEmpty)
         }
 
+        /// A 0-d `biases` factor through `gatherQuantizedMM` with one row per matrix (what a MoE
+        /// layer presents) takes an `_ib` gather kernel, `gather_qmv_fast` / `gather_qmv` for
+        /// few rows and the sorted `gather_qmm_rhs` for many, and gives the bit patterns of the
+        /// explicit bias `scales * T(f)`, for the shipped factor and for one whose product rounds
+        /// (a kernel that derived the factor from the bit width would miss it). More rows per
+        /// matrix still get a materialized bias and no `_ib` kernel (numen-tech/gemma4-qat#1833).
+        func testGatherImpliedBiasKernelNamesItsRoute() {
+            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.gatherImpliedBiasVersion, 1)
+            // The core's Apple6 test (`Device::is_apple6()`): no simdgroup matrices there, so the
+            // sorted kernel throws and only the vector kernels run.
+            #if os(macOS)
+                let device = MTLCopyAllDevices().first ?? MTLCreateSystemDefaultDevice()
+            #else
+                let device = MTLCreateSystemDefaultDevice()
+            #endif
+            let apple6 =
+                ProcessInfo.processInfo.environment["MLX_FORCE_GPU_FAMILY"] == "apple6"
+                || (device?.supportsFamily(.apple6) == true
+                    && device?.supportsFamily(.apple7) == false)
+            let experts = 8
+            struct Route {
+                let rows: [UInt32]
+                let perMatrix: Int
+                let sorted: Bool
+                let family: String
+                let implied: Bool
+            }
+            // K % 256 == 0 with N % 8 == 0 is gather_qmv_fast, anything else gather_qmv.
+            for (k, n, fast) in [(512, 64, true), (704, 512, false)] {
+                let w = MLXRandom.normal([experts, n, k], key: MLXRandom.key(5)).asType(.float16)
+                let (wq, scales, _) = quantized(w, groupSize: 32, bits: 4, stream: .gpu)
+                func run(_ x: MLXArray, _ biases: MLXArray, _ rhs: MLXArray, sorted: Bool) -> (
+                    [UInt16], [String]
+                ) {
+                    let (y, kernels) = GPUFamilyRoute.traceKernels { () -> MLXArray in
+                        let y = gatherQuantizedMM(
+                            x, wq, scales: scales, biases: biases, rhsIndices: rhs,
+                            transpose: true, groupSize: 32, bits: 4, sortedIndices: sorted,
+                            stream: .gpu)
+                        eval(y)
+                        return y
+                    }
+                    XCTAssertEqual(y.dtype, .float16)
+                    return (
+                        y.asArray(Float16.self).map(\.bitPattern),
+                        kernels.filter { $0.contains("_gather_q") }
+                    )
+                }
+                let few = fast ? "_gather_qmv_fast_" : "_gather_qmv_"
+                var routes = [
+                    Route(
+                        rows: [5, 0, 2], perMatrix: 1, sorted: false, family: few, implied: true),
+                    Route(
+                        rows: [5, 0, 2], perMatrix: 3, sorted: false, family: few, implied: false),
+                ]
+                if !apple6 {
+                    routes.append(
+                        Route(
+                            rows: (0 ..< 64).map { UInt32($0 * experts / 64) }, perMatrix: 1,
+                            sorted: true, family: "_gather_qmm_rhs_", implied: true))
+                }
+                for value in [Float(-8), -5.3] {
+                    let factor = MLXArray(value).asType(.float16)
+                    let explicit = scales * factor
+                    eval(wq, scales, explicit)
+                    for route in routes {
+                        let x = MLXRandom.normal(
+                            [route.rows.count, route.perMatrix, k], key: MLXRandom.key(6)
+                        ).asType(.float16)
+                        let rhs = MLXArray(route.rows)
+                        let (yImplied, kImplied) = run(x, factor, rhs, sorted: route.sorted)
+                        let (yExplicit, kExplicit) = run(x, explicit, rhs, sorted: route.sorted)
+                        let label =
+                            "k \(k), f \(value), rows \(route.rows.count) x \(route.perMatrix), "
+                            + "sorted \(route.sorted)"
+                        XCTAssertEqual(yImplied, yExplicit, label)
+                        XCTAssertEqual(kImplied.count, 1, "\(label): \(kImplied)")
+                        XCTAssertEqual(kExplicit.count, 1, "\(label): \(kExplicit)")
+                        XCTAssertTrue(
+                            kImplied.allSatisfy { $0.contains(route.family) },
+                            "\(label): \(kImplied)")
+                        XCTAssertEqual(
+                            kImplied.contains { $0.contains("_gather_qmv_fast_") },
+                            fast && !route.sorted, "\(label): \(kImplied)")
+                        // The sorted kernels' names end with their alignment constants.
+                        XCTAssertEqual(
+                            kImplied.allSatisfy {
+                                $0.hasSuffix("_ib") || $0.contains("_ib_align_")
+                            },
+                            route.implied, "\(label): \(kImplied)")
+                        XCTAssertFalse(
+                            kExplicit.contains { $0.contains("_ib") }, "\(label): \(kExplicit)")
+                    }
+                }
+            }
+        }
+
         /// In a process started with `MLX_DISABLE_NAX=1` the core takes no NAX kernel. Skips
         /// otherwise: the core reads the variable once, so a test cannot set it after another
         /// test has run a GPU op.

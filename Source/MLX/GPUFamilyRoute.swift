@@ -95,6 +95,25 @@
             qmvMMAVersion >= 2 && mlx_qmv_mma_device() != 0
         }
 
+        /// The version of the implied-bias gather kernels the core carries
+        /// (`mlx::core::metal::kGatherImpliedBiasVersion`); 0 when it carries none.
+        ///
+        /// - 1: an indexed `gatherQuantizedMM` keeps a 0-d `biases` factor (the implied bias
+        ///   `scales * T(f)`) for a transposed product of one row per matrix on the GPU, with
+        ///   unpromoted scales (their dtype is the output's) at 1/2/4/8 bits: the calls a MoE layer
+        ///   makes. The affine `gather_qmv`, `gather_qmv_fast`, `gather_qmm_rhs` and
+        ///   `gather_qmm_rhs_nax` kernels (names holding `_ib`) form the bias from the factor,
+        ///   bit-identical to explicit biases. Every other indexed call (more rows, not
+        ///   transposed, promoted scales, 3/5/6 bits, the CPU) materializes the bias as before
+        ///   (numen-tech/gemma4-qat#1833). Below 1 every indexed call materializes it: the result
+        ///   is the same, but each call rebuilds the whole bias tensor, so a loader that counts on
+        ///   never holding a gathered layer's biases requires `>= 1`.
+        ///
+        /// Constant for a build.
+        public static var gatherImpliedBiasVersion: Int {
+            Int(mlx_gather_implied_bias_version())
+        }
+
         /// The bytes the Metal residency sets wire right now: every tracked allocation that fits
         /// the wired limit (0 where residency sets are unavailable). For a test that has to prove
         /// what a raised wired limit covers (numen-tech/gemma4-qat#1228).
@@ -156,6 +175,7 @@
         public static var qmmSplitKNAXVersion: Int { 0 }
         public static var nonResidentNoCopyVersion: Int { 0 }
         public static var qmvMMAVersion: Int { 0 }
+        public static var gatherImpliedBiasVersion: Int { 0 }
         public static func setQmvMMA(_ enabled: Bool) {}
         public static var qmvMMADevice: Bool { false }
         public static var residencyWiredBytes: Int { 0 }
