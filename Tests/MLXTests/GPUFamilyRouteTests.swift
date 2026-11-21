@@ -266,7 +266,10 @@
                     XCTAssertEqual(route.blocked, on && rows > 8, "on \(on), \(rows): \(kernels)")
                 }
                 let (off, on) = (outputs[false]!, outputs[true]!)
-                XCTAssertTrue(off.arrayEqual(on).item(Bool.self), "\(rows) rows: route output differs from off")
+                // Within an fp16 ulp or two: the GEMM tiles change with the row count.
+                XCTAssertTrue(
+                    off.allClose(on, rtol: 1e-3, atol: 1e-4).item(Bool.self),
+                    "\(rows) rows: route output differs from off beyond the last bits")
             }
         }
 

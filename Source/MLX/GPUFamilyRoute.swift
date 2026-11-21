@@ -151,9 +151,8 @@
         ///   d512 kernel on a NAX GPU. Off, such a call below 1,024 rows runs unfused, building
         ///   [heads x rows x keys] scores (numen-tech/gemma4-qat#1972).
         /// - 2: the route takes the blocked path on every GPU but Apple6, NAX included, never the
-        ///   NAX d512 kernel, from 9 rows up; its output matched the unfused path bit for bit in
-        ///   every measured case, which the core does not promise (a row whose scores all sit at
-        ///   the fp16 floor differs).
+        ///   NAX d512 kernel, from 9 rows up; its output is within an fp16 ulp or two of the
+        ///   unfused path's (the GEMM tiles change with the row count), not promised equal.
         ///   Off, every call routes as upstream does.
         ///
         /// Constant for a build.
