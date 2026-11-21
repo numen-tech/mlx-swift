@@ -218,12 +218,12 @@
             XCTAssertEqual(key, "MLX_QMV_MMA")
         }
 
-        /// ``GPUFamilyRoute/setSDPAD512Prefill(_:)`` lets a causal head-dim-512 call of 9 to
-        /// 1,023 rows take a fused d512 path: the blocked path (`sdpa_blocked_*`) without NAX, the
-        /// NAX d512 kernel (`_bd512`) with it. Off, the call stays unfused; 8 rows never route
-        /// (numen-tech/gemma4-qat#1972).
+        /// ``GPUFamilyRoute/setSDPAD512Prefill(_:)`` sends a causal head-dim-512 call of 9 to
+        /// 1,023 rows to the blocked path (`sdpa_blocked_*`) on every GPU, NAX included, never the
+        /// NAX d512 kernel (`_bd512`), and its output matches the unfused path bit for bit. Off,
+        /// the call stays unfused; 8 rows never route (numen-tech/gemma4-qat#1972).
         func testSDPAD512PrefillTakesTheFusedPath() throws {
-            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.sdpaD512PrefillVersion, 1)
+            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.sdpaD512PrefillVersion, 2)
             XCTAssertFalse(GPUFamilyRoute.sdpaD512Prefill)
             defer { GPUFamilyRoute.setSDPAD512Prefill(false) }
             func fused(_ kernels: [String]) -> (blocked: Bool, nax: Bool) {
@@ -251,18 +251,11 @@
                     }
                     outputs[on] = y
                     let route = fused(kernels)
-                    if on && rows > 8 {
-                        XCTAssertEqual(route.blocked, !GPUFamilyRoute.isNAXAvailable, "\(rows): \(kernels)")
-                        XCTAssertEqual(route.nax, GPUFamilyRoute.isNAXAvailable, "\(rows): \(kernels)")
-                    } else {
-                        XCTAssertFalse(route.blocked || route.nax, "on \(on), \(rows): \(kernels)")
-                    }
+                    XCTAssertFalse(route.nax, "on \(on), \(rows): \(kernels)")
+                    XCTAssertEqual(route.blocked, on && rows > 8, "on \(on), \(rows): \(kernels)")
                 }
                 let (off, on) = (outputs[false]!, outputs[true]!)
-                XCTAssertTrue(
-                    off.asType(.float32).allClose(on.asType(.float32), rtol: 1e-3, atol: 1e-3)
-                        .item(Bool.self),
-                    "\(rows) rows")
+                XCTAssertTrue(off.arrayEqual(on).item(Bool.self), "\(rows) rows: route output differs from off")
             }
         }
 

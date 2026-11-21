@@ -113,8 +113,10 @@ int mlx_gather_implied_bias_version(void);
  * causal head-dim-512 attention of 9 or more query rows with no array mask,
  * sinks or logsumexp take the fused d512 paths (the blocked path on a GPU
  * without NAX, the NAX d512 kernel on a NAX GPU) instead of the unfused path
- * and its [heads x rows x keys] scores (numen-tech/gemma4-qat#1972).
- * Constant per build. Not part of mlx-c.
+ * and its [heads x rows x keys] scores (numen-tech/gemma4-qat#1972). 2: the
+ * route takes the blocked path on a NAX GPU too, never the NAX d512 kernel,
+ * and matches the unfused path bit for bit. Constant per build. Not part of
+ * mlx-c.
  */
 int mlx_sdpa_d512_prefill_version(void);
 
