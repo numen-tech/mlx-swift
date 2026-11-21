@@ -95,6 +95,34 @@
             qmvMMAVersion >= 2 && mlx_qmv_mma_device() != 0
         }
 
+        /// The version of the quantized-matmul row-stride route the core carries
+        /// (`mlx::core::metal::kQuantizedRowStrideVersion`); 0 when it carries none.
+        ///
+        /// - 1: under ``setQuantizedRowStride(_:)`` or ``quantizedRowStrideEnvironmentKey`` set
+        ///   to `1` (off by default), an affine 4/8-bit `quantizedMM` with an explicit bias reads
+        ///   a `w`, `scales` or `biases` whose rows are a row stride apart (a view of some columns
+        ///   of a wider array, such as the K or V view of a packed compact K=V KV row) in place,
+        ///   through the row-stride twins of its kernels (names ending `_rs`: qmv, qmv_fast,
+        ///   qmv_wide, qmv_wide_rr, qmm_t, qmm_t_nax, qvm, qvm_split_k, qmm_n, qmm_n_nax),
+        ///   bit-identical to the copy. Off, and below 1, the core copies each such array on every
+        ///   call, as it still does for qmv_quad (K of 64 or 128), qmv_mma, the split-K qmm (a
+        ///   transposed non-batched product at or above the qmv batch limit), an implied or absent
+        ///   bias, other bit widths, a column stride and Apple6 (numen-tech/gemma4-qat#1973).
+        ///
+        /// Constant for a build.
+        public static var quantizedRowStrideVersion: Int {
+            Int(mlx_quantized_row_stride_version())
+        }
+
+        /// Turns the quantized-matmul row-stride route on or off for the process without
+        /// touching the environment (a host that switches it per model load, as
+        /// ``setQmvMMA(_:)``). ``quantizedRowStrideEnvironmentKey``, when set, decides alone.
+        /// A no-op below ``quantizedRowStrideVersion`` 1.
+        public static func setQuantizedRowStride(_ enabled: Bool) {
+            guard quantizedRowStrideVersion >= 1 else { return }
+            mlx_set_quantized_row_stride(enabled ? 1 : 0)
+        }
+
         /// The version of the implied-bias gather kernels the core carries
         /// (`mlx::core::metal::kGatherImpliedBiasVersion`); 0 when it carries none.
         ///
@@ -207,6 +235,8 @@
         public static var sdpaD512Prefill: Bool { false }
         public static func setQmvMMA(_ enabled: Bool) {}
         public static var qmvMMADevice: Bool { false }
+        public static var quantizedRowStrideVersion: Int { 0 }
+        public static func setQuantizedRowStride(_ enabled: Bool) {}
         public static var residencyWiredBytes: Int { 0 }
         public static var residencySetsAvailable: Bool { false }
         public static var isNAXAvailable: Bool { false }
@@ -237,4 +267,8 @@ extension GPUFamilyRoute {
     /// `affine_qmv_mma_`; ``qmvMMAVersion`` >= 1), never cached; a host that switches the route
     /// at run time uses ``setQmvMMA(_:)`` instead.
     public static let qmvMMAEnvironmentKey = "MLX_QMV_MMA"
+    /// `1` turns the quantized-matmul row-stride route on and any other value off, whatever
+    /// ``setQuantizedRowStride(_:)`` says (``quantizedRowStrideVersion`` >= 1); the core reads it
+    /// only for a call that would otherwise copy.
+    public static let quantizedRowStrideEnvironmentKey = "MLX_QMM_ROW_STRIDE"
 }

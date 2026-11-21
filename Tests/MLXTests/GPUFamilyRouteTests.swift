@@ -292,6 +292,111 @@
             }
         }
 
+        func testVendoredCoreCarriesTheQuantizedRowStrideRoute() {
+            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.quantizedRowStrideVersion, 1)
+            XCTAssertEqual(GPUFamilyRoute.quantizedRowStrideEnvironmentKey, "MLX_QMM_ROW_STRIDE")
+        }
+
+        /// Under ``GPUFamilyRoute/setQuantizedRowStride(_:)`` the two 512-value views of a packed
+        /// 640-value row (K = values 0..<512, V = values 128..<640: a compact K=V KV cache), batched
+        /// as quantized attention passes them (queries `[1, kvHeads, 8, M, 512]`), go through one
+        /// `_rs` kernel each with no copy and give the bit patterns of their packed copies, at
+        /// decode, verify and prefill widths; off, the core copies the three arrays of each view
+        /// and takes the stock kernel (numen-tech/gemma4-qat#1973).
+        func testQuantizedRowStrideReadsViewsInPlace() throws {
+            #if os(macOS)
+                let device = MTLCopyAllDevices().first ?? MTLCreateSystemDefaultDevice()
+            #else
+                let device = MTLCreateSystemDefaultDevice()
+            #endif
+            let apple6 =
+                ProcessInfo.processInfo.environment["MLX_FORCE_GPU_FAMILY"] == "apple6"
+                || (device?.supportsFamily(.apple6) == true
+                    && device?.supportsFamily(.apple7) == false)
+            try XCTSkipIf(apple6, "Apple6 has no row-stride kernels: it copies")
+            let key = GPUFamilyRoute.quantizedRowStrideEnvironmentKey
+            let saved = ProcessInfo.processInfo.environment[key]
+            unsetenv(key)
+            defer {
+                GPUFamilyRoute.setQuantizedRowStride(false)
+                if let saved { setenv(key, saved, 1) }
+            }
+            typealias Triple = (MLXArray, MLXArray, MLXArray)
+            func packed(_ t: Triple) -> Triple {
+                let out = (contiguous(t.0), contiguous(t.1), contiguous(t.2))
+                eval(out.0, out.1, out.2)
+                return out
+            }
+            func isCopy(_ name: String) -> Bool { name.contains("_copy") }
+            var taken = Set<String>()
+            // The shipped format (8-bit, group size 64) at the 26B's and the 31B's KV head counts,
+            // and the other formats the route takes.
+            for (kvHeads, keys, bits, groupSize) in [
+                (2, 640, 8, 64), (2, 1536, 8, 64), (4, 2304, 8, 64), (2, 640, 4, 32),
+                (2, 1024, 8, 128),
+            ] {
+                let rows = MLXRandom.normal(
+                    [1, kvHeads, 1, keys + 96, 640], key: MLXRandom.key(1973)
+                ).asType(.float16)
+                let (wq, scales, packedBiases) = quantized(
+                    rows, groupSize: groupSize, bits: bits, stream: .gpu)
+                let biases = try XCTUnwrap(packedBiases)
+                eval(wq, scales, biases)
+                func view(values: Range<Int>) -> Triple {
+                    let words = values.lowerBound * bits / 32 ..< values.upperBound * bits / 32
+                    let groups = values.lowerBound / groupSize ..< values.upperBound / groupSize
+                    return (
+                        wq[.ellipsis, ..<keys, words], scales[.ellipsis, ..<keys, groups],
+                        biases[.ellipsis, ..<keys, groups]
+                    )
+                }
+                func run(_ x: MLXArray, _ t: Triple, transpose: Bool, on: Bool) -> (
+                    [UInt16], [String]
+                ) {
+                    GPUFamilyRoute.setQuantizedRowStride(on)
+                    let (y, kernels) = GPUFamilyRoute.traceKernels { () -> MLXArray in
+                        let y = quantizedMM(
+                            x, t.0, scales: t.1, biases: t.2, transpose: transpose,
+                            groupSize: groupSize, bits: bits, stream: .gpu)
+                        eval(y)
+                        return y
+                    }
+                    return (y.asArray(Float16.self).map(\.bitPattern), kernels)
+                }
+                let keyView = view(values: 0 ..< 512)
+                let valueView = view(values: 128 ..< 640)
+                for m in [1, 4, 8, 33, 512] {
+                    let q = MLXRandom.normal(
+                        [1, kvHeads, 8, m, 512], key: MLXRandom.key(UInt64(m))
+                    ).asType(.float16)
+                    let p = MLXRandom.normal(
+                        [1, kvHeads, 8, m, keys], key: MLXRandom.key(UInt64(m + 1))
+                    ).asType(.float16)
+                    eval(q, p)
+                    for (x, t, transpose) in [(q, keyView, true), (p, valueView, false)] {
+                        let label =
+                            "heads \(kvHeads) keys \(keys) \(bits)-bit g\(groupSize) M \(m) transpose \(transpose)"
+                        let stock = run(x, packed(t), transpose: transpose, on: true)
+                        let inPlace = run(x, t, transpose: transpose, on: true)
+                        let copied = run(x, t, transpose: transpose, on: false)
+                        XCTAssertEqual(inPlace.0, stock.0, label)
+                        XCTAssertEqual(copied.0, stock.0, label)
+                        XCTAssertFalse(
+                            stock.1.contains { $0.hasSuffix("_rs") }, "\(label): \(stock.1)")
+                        XCTAssertEqual(
+                            inPlace.1.map { $0.hasSuffix("_rs") ? String($0.dropLast(3)) : $0 },
+                            stock.1, label)
+                        let twins = inPlace.1.filter { $0.hasSuffix("_rs") }
+                        XCTAssertEqual(twins.count, 1, "\(label): \(inPlace.1)")
+                        taken.formUnion(twins)
+                        XCTAssertEqual(copied.1.filter { !isCopy($0) }, stock.1, label)
+                        XCTAssertEqual(copied.1.count(where: isCopy), 3, "\(label): \(copied.1)")
+                    }
+                }
+            }
+            print("[QuantizedRowStride] kernels: \(taken.sorted())")
+        }
+
         /// The trace sees a kernel on every lookup, not only its first load, and nothing after it ends.
         func testKernelTraceSeesEveryLookup() {
             let a = MLXArray.ones([8, 8], dtype: .float32, stream: .gpu)

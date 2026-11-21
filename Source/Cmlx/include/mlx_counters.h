@@ -150,6 +150,29 @@ void mlx_set_qmv_mma(int enabled);
 int mlx_qmv_mma_device(void);
 
 /**
+ * The version of the quantized-matmul row-stride route the vendored
+ * numen-tech/mlx core carries (`mlx::core::metal::kQuantizedRowStrideVersion`,
+ * device.h), 0 if it carries none. 1: under `mlx_set_quantized_row_stride(1)`
+ * or `MLX_QMM_ROW_STRIDE=1` (off by default) an affine 4/8-bit
+ * `mlx_quantized_matmul` with an explicit bias reads a w, scales or biases
+ * whose rows are a row stride apart (a view of some columns of a wider array)
+ * in place, through the "_rs" twins of qmv, qmv_fast, qmv_wide, qmv_wide_rr,
+ * qmm_t, qmm_t_nax, qvm, qvm_split_k, qmm_n and qmm_n_nax, instead of copying
+ * it; qmv_quad, qmv_mma, the split-K qmm and Apple6 copy as before
+ * (numen-tech/gemma4-qat#1973). Constant per build. Not part of mlx-c.
+ */
+int mlx_quantized_row_stride_version(void);
+
+/**
+ * `mlx::core::metal::set_quantized_row_stride(enabled != 0)`: turns the
+ * quantized-matmul row-stride route on or off for the process without touching
+ * the environment. `MLX_QMM_ROW_STRIDE`, when set, decides alone (`1` on,
+ * anything else off). Needs `mlx_quantized_row_stride_version() >= 1`. Not
+ * part of mlx-c.
+ */
+void mlx_set_quantized_row_stride(int enabled);
+
+/**
  * `mlx_array_new_data_managed_payload` (mlx-c) through
  * `mlx::core::metal::nonresident_array`: a no-copy array over `data` whose
  * Metal buffer the allocator keeps out of the residency sets. `dtor(payload)`
