@@ -122,6 +122,14 @@ extern "C" int mlx_sdpa_d512_prefill(void) {
   return mlx::core::metal::sdpa_d512_prefill() ? 1 : 0;
 }
 
+extern "C" int mlx_quantized_row_stride_version(void) {
+  return mlx::core::metal::kQuantizedRowStrideVersion;
+}
+
+extern "C" void mlx_set_quantized_row_stride(int enabled) {
+  mlx::core::metal::set_quantized_row_stride(enabled != 0);
+}
+
 extern "C" void mlx_kernel_trace_start(void) {
   mlx::core::metal::kernel_trace_start();
 }
