@@ -114,6 +114,32 @@
             Int(mlx_gather_implied_bias_version())
         }
 
+        /// The version of the head-dim-512 prefill route the core carries
+        /// (`mlx::core::metal::kSdpaD512PrefillVersion`); 0 when it carries none.
+        ///
+        /// - 1: ``setSDPAD512Prefill(_:)`` (off by default) lets a causal head-dim-512 attention of
+        ///   9 or more query rows with no array mask, sinks or logsumexp take the fused d512 paths:
+        ///   the blocked path (kernel names starting `sdpa_blocked_`) on a GPU without NAX, the NAX
+        ///   d512 kernel on a NAX GPU. Off, such a call below 1,024 rows runs unfused, building
+        ///   [heads x rows x keys] scores (numen-tech/gemma4-qat#1972).
+        ///
+        /// Constant for a build.
+        public static var sdpaD512PrefillVersion: Int { Int(mlx_sdpa_d512_prefill_version()) }
+
+        /// Turns the head-dim-512 prefill route on or off for the process: a host that switches it
+        /// per model load calls this (there is no environment variable). The core reads it when an
+        /// attention op is built, so a call keeps the path it was built for. A no-op below
+        /// ``sdpaD512PrefillVersion`` 1.
+        public static func setSDPAD512Prefill(_ enabled: Bool) {
+            guard sdpaD512PrefillVersion >= 1 else { return }
+            mlx_set_sdpa_d512_prefill(enabled ? 1 : 0)
+        }
+
+        /// Whether the head-dim-512 prefill route is on; false below ``sdpaD512PrefillVersion`` 1.
+        public static var sdpaD512Prefill: Bool {
+            sdpaD512PrefillVersion >= 1 && mlx_sdpa_d512_prefill() != 0
+        }
+
         /// The bytes the Metal residency sets wire right now: every tracked allocation that fits
         /// the wired limit (0 where residency sets are unavailable). For a test that has to prove
         /// what a raised wired limit covers (numen-tech/gemma4-qat#1228).
@@ -176,6 +202,9 @@
         public static var nonResidentNoCopyVersion: Int { 0 }
         public static var qmvMMAVersion: Int { 0 }
         public static var gatherImpliedBiasVersion: Int { 0 }
+        public static var sdpaD512PrefillVersion: Int { 0 }
+        public static func setSDPAD512Prefill(_ enabled: Bool) {}
+        public static var sdpaD512Prefill: Bool { false }
         public static func setQmvMMA(_ enabled: Bool) {}
         public static var qmvMMADevice: Bool { false }
         public static var residencyWiredBytes: Int { 0 }

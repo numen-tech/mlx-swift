@@ -218,6 +218,54 @@
             XCTAssertEqual(key, "MLX_QMV_MMA")
         }
 
+        /// ``GPUFamilyRoute/setSDPAD512Prefill(_:)`` lets a causal head-dim-512 call of 9 to
+        /// 1,023 rows take a fused d512 path: the blocked path (`sdpa_blocked_*`) without NAX, the
+        /// NAX d512 kernel (`_bd512`) with it. Off, the call stays unfused; 8 rows never route
+        /// (numen-tech/gemma4-qat#1972).
+        func testSDPAD512PrefillTakesTheFusedPath() throws {
+            XCTAssertGreaterThanOrEqual(GPUFamilyRoute.sdpaD512PrefillVersion, 1)
+            XCTAssertFalse(GPUFamilyRoute.sdpaD512Prefill)
+            defer { GPUFamilyRoute.setSDPAD512Prefill(false) }
+            func fused(_ kernels: [String]) -> (blocked: Bool, nax: Bool) {
+                (
+                    kernels.contains { $0.hasPrefix("sdpa_blocked_causal_mask_") },
+                    kernels.contains { $0.hasPrefix("steel_attention") && $0.contains("_bd512") }
+                )
+            }
+            for (rows, keys) in [(512, 1536), (280, 811), (9, 300), (8, 600)] {
+                let q = (MLXRandom.normal([1, 16, rows, 512], key: MLXRandom.key(1)) * 0.5)
+                    .asType(.float16)
+                let k = (MLXRandom.normal([1, 2, keys, 512], key: MLXRandom.key(2)) * 0.5)
+                    .asType(.float16)
+                let v = (MLXRandom.normal([1, 2, keys, 512], key: MLXRandom.key(3)) * 0.5)
+                    .asType(.float16)
+                var outputs = [Bool: MLXArray]()
+                for on in [false, true] {
+                    GPUFamilyRoute.setSDPAD512Prefill(on)
+                    XCTAssertEqual(GPUFamilyRoute.sdpaD512Prefill, on)
+                    let (y, kernels) = GPUFamilyRoute.traceKernels { () -> MLXArray in
+                        let y = MLXFast.scaledDotProductAttention(
+                            queries: q, keys: k, values: v, scale: Float(1 / 512.0.squareRoot()), mask: .causal)
+                        eval(y)
+                        return y
+                    }
+                    outputs[on] = y
+                    let route = fused(kernels)
+                    if on && rows > 8 {
+                        XCTAssertEqual(route.blocked, !GPUFamilyRoute.isNAXAvailable, "\(rows): \(kernels)")
+                        XCTAssertEqual(route.nax, GPUFamilyRoute.isNAXAvailable, "\(rows): \(kernels)")
+                    } else {
+                        XCTAssertFalse(route.blocked || route.nax, "on \(on), \(rows): \(kernels)")
+                    }
+                }
+                let (off, on) = (outputs[false]!, outputs[true]!)
+                XCTAssertTrue(
+                    off.asType(.float32).allClose(on.asType(.float32), rtol: 1e-3, atol: 1e-3)
+                        .item(Bool.self),
+                    "\(rows) rows")
+            }
+        }
+
         /// ``GPUFamilyRoute/setQmvMMA(_:)`` takes the route as the variable does, with the variable
         /// unset, and off again leaves it to the variable (numen-tech/gemma4-qat#1701).
         func testSetQmvMMATakesTheRouteWithoutTheEnvironment() throws {

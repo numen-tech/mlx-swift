@@ -58,6 +58,10 @@ extern "C" int mlx_gather_implied_bias_version(void) {
   return mlx::core::metal::kGatherImpliedBiasVersion;
 }
 
+extern "C" int mlx_sdpa_d512_prefill_version(void) {
+  return mlx::core::metal::kSdpaD512PrefillVersion;
+}
+
 extern "C" mlx_array mlx_array_new_data_managed_payload_nonresident(
     void* data,
     const int* shape,
@@ -108,6 +112,14 @@ extern "C" void mlx_set_qmv_mma(int enabled) {
 
 extern "C" int mlx_qmv_mma_device(void) {
   return mlx::core::metal::qmv_mma_device() ? 1 : 0;
+}
+
+extern "C" void mlx_set_sdpa_d512_prefill(int enabled) {
+  mlx::core::metal::set_sdpa_d512_prefill(enabled != 0);
+}
+
+extern "C" int mlx_sdpa_d512_prefill(void) {
+  return mlx::core::metal::sdpa_d512_prefill() ? 1 : 0;
 }
 
 extern "C" void mlx_kernel_trace_start(void) {
