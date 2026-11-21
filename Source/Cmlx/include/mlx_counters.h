@@ -107,6 +107,33 @@ int mlx_qmv_mma_version(void);
 int mlx_gather_implied_bias_version(void);
 
 /**
+ * The version of the head-dim-512 prefill route the vendored numen-tech/mlx
+ * core carries (`mlx::core::metal::kSdpaD512PrefillVersion`, device.h), 0 if
+ * it carries none. 1: `mlx_set_sdpa_d512_prefill(1)` (off by default) lets a
+ * causal head-dim-512 attention of 9 or more query rows with no array mask,
+ * sinks or logsumexp take the fused d512 paths (the blocked path on a GPU
+ * without NAX, the NAX d512 kernel on a NAX GPU) instead of the unfused path
+ * and its [heads x rows x keys] scores (numen-tech/gemma4-qat#1972).
+ * Constant per build. Not part of mlx-c.
+ */
+int mlx_sdpa_d512_prefill_version(void);
+
+/**
+ * `mlx::core::metal::set_sdpa_d512_prefill(enabled != 0)`: turns the
+ * head-dim-512 prefill route on or off for the process (a host that switches it
+ * per model load). Read when an attention op is built. Needs
+ * `mlx_sdpa_d512_prefill_version() >= 1`. Not part of mlx-c.
+ */
+void mlx_set_sdpa_d512_prefill(int enabled);
+
+/**
+ * `mlx::core::metal::sdpa_d512_prefill()`: 1 while the head-dim-512 prefill
+ * route is on, else 0. Needs `mlx_sdpa_d512_prefill_version() >= 1`. Not part
+ * of mlx-c.
+ */
+int mlx_sdpa_d512_prefill(void);
+
+/**
  * `mlx::core::metal::set_qmv_mma(enabled != 0)`: turns the affine qmv_mma route
  * on or off for the process, as `MLX_QMV_MMA=1` does, without touching the
  * environment (a host that switches it per model load; setenv/unsetenv may race
